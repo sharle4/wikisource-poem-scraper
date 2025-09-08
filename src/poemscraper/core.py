@@ -88,10 +88,8 @@ class ScraperOrchestrator:
 
         page_details = page_info["pages"][0]
         
-        # --- NOUVELLE LOGIQUE DE RECHERCHE ET DE CORRECTION ---
         if "missing" in page_details:
             logger.warning(f"Category '{full_cat_title}' not found with exact title. Attempting search fallback...")
-            # The namespace for "Category" is 14
             corrected_title = await client.search_for_page(full_cat_title, namespace=14)
             
             if not corrected_title:

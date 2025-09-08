@@ -8,7 +8,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/2.2 (https://votre_projet; email@example.com) "
+    "WikisourcePoemScraper/2.O.2 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -51,10 +51,21 @@ class WikiAPIClient:
                           logger=logger)
     async def _make_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self.session: raise RuntimeError("ClientSession not initialized.")
-        params.update({"format": "json", "formatversion": "2"})
+
+        sanitized_params = {}
+        for key, value in params.items():
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                sanitized_params[key] = str(value).lower()
+            else:
+                sanitized_params[key] = value
+
+        sanitized_params.update({"format": "json", "formatversion": "2"})
+        
         async with self.semaphore:
-            logger.debug(f"API Request: {params}")
-            async with self.session.get(self.api_endpoint, params=params) as response:
+            logger.debug(f"API Request: {sanitized_params}")
+            async with self.session.get(self.api_endpoint, params=sanitized_params) as response:
                 response.raise_for_status()
                 data = await response.json()
                 if "error" in data: logger.error(f"MediaWiki API Error: {data['error']}")
@@ -68,15 +79,11 @@ class WikiAPIClient:
 
     async def search_for_page(self, search_term: str, namespace: int) -> Optional[str]:
         """
-        Uses opensearch to find the most likely page title for a search term in a given namespace.
-        Returns the canonical title of the best match, or None.
+        Uses opensearch to find the most likely page title for a search term.
         """
-        params = {
-            "action": "opensearch", "search": search_term, "limit": 1, "namespace": namespace
-        }
+        params = {"action": "opensearch", "search": search_term, "limit": 1, "namespace": namespace}
         data = await self._make_request(params)
-        # opensearch returns [searchTerm, [results], [descriptions], [urls]]
-        if isinstance(data, list) and len(data) == 4 and data[1]:
+        if isinstance(data, list) and len(data) >= 2 and data[1]:
             return data[1][0]
         return None
 
@@ -88,9 +95,8 @@ class WikiAPIClient:
             params = {
                 "action": "query", "list": "categorymembers",
                 "cmtitle": f"{cat_prefix}:{category_title}", "cmtype": "subcat",
-                "cmlimit": "max", "cmprop": "title|ids",
+                "cmlimit": "max", "cmprop": "title|ids", "cmcontinue": cmcontinue,
             }
-            if cmcontinue: params["cmcontinue"] = cmcontinue
             data = await self._make_request(params)
             for member in data.get("query", {}).get("categorymembers", []): yield member
             if "continue" in data: cmcontinue = data["continue"]["cmcontinue"]
@@ -104,9 +110,8 @@ class WikiAPIClient:
             params = {
                 "action": "query", "list": "categorymembers",
                 "cmtitle": f"{cat_prefix}:{category_title}", "cmtype": "page",
-                "cmlimit": "max", "cmprop": "title|ids",
+                "cmlimit": "max", "cmprop": "title|ids", "cmcontinue": cmcontinue,
             }
-            if cmcontinue: params["cmcontinue"] = cmcontinue
             data = await self._make_request(params)
             for member in data.get("query", {}).get("categorymembers", []): yield member
             if "continue" in data: cmcontinue = data["continue"]["cmcontinue"]

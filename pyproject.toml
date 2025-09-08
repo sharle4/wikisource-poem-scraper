@@ -22,14 +22,13 @@ classifiers = [
     "Framework :: AsyncIO",
 ]
 dependencies = [
-    "aiohttp[speedups]>=3.9.0",  # Client HTTP asynchrone
-    "aiofiles>=23.0.0",         # IO de fichiers asynchrone
-    "aiosqlite>=0.19.0",        # Base de données SQLite asynchrone
-    "backoff>=2.2.0",           # Stratégie de retry (backoff exponentiel)
-    "pydantic>=2.7.0",          # Validation et typage des schémas de données
-    "tqdm>=4.66.0",             # Barres de progression
-    "mwparserfromhell>=0.6.0",  # Parsing avancé du Wikitext (crucial pour les templates/métadonnées)
-    "requests>=2.31.0"          # (Utilisé par mwclient, ou pour robots.txt synchrone si nécessaire)
+    "aiohttp[speedups]>=3.9.0",
+    "aiofiles>=23.0.0",
+    "aiosqlite>=0.19.0",
+    "backoff>=2.2.0",
+    "pydantic>=2.7.0",
+    "tqdm>=4.66.0",
+    "mwparserfromhell>=0.6.0",
 ]
 
 [project.optional-dependencies]
@@ -40,10 +39,14 @@ dev = [
     "isort>=5.13.0",
     "flake8>=7.0.0",
     "mypy>=1.9.0",
+    "requests>=2.31.0",
 ]
 
 [project.scripts]
-poemscraper = "poemscraper.cli:main_cli" # Permet d'appeler 'poemscraper' directement après install
+poemscraper = "poemscraper.cli:main_cli"
 
 [tool.setuptools]
-packages = ["src"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

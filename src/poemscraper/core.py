@@ -5,7 +5,7 @@ import gzip
 import json
 
 import aiofiles
-from tqdm.asyncio import tqdm
+from tqdm import tqdm
 
 from .api_client import WikiAPIClient
 from .database import DatabaseManager
@@ -33,11 +33,13 @@ class ScraperOrchestrator:
     async def run(self):
         """Main execution method."""
         logger.info(f"Starting scraper for '{self.config.lang}.wikisource.org'")
-        logger.info(f"Configuration: {self.config}")
+        logger.info(f"Configuration: {vars(self.config)}")
         
         await self.db_manager.initialize()
 
         page_queue = asyncio.Queue(maxsize=self.config.workers * 2)
+        
+        self.progress_bar = tqdm(desc="Processing pages", unit=" poem", total=0, dynamic_ncols=True)
 
         async with WikiAPIClient(self.api_endpoint, self.config.workers) as client:
             producer_task = asyncio.create_task(
@@ -50,25 +52,22 @@ class ScraperOrchestrator:
             ]
             
             await producer_task
-            logger.info("Producer finished: All pages have been enqueued.")
 
             await page_queue.join()
-            logger.info("Consumer queue is empty. All tasks are completing.")
 
             for task in consumer_tasks:
                 task.cancel()
             
             await asyncio.gather(*consumer_tasks, return_exceptions=True)
-
+        
+        self.progress_bar.close()
         await self.db_manager.close()
         logger.info("Scraping finished.")
         logger.info(f"Total poems processed and saved: {self.processed_counter}")
         logger.info(f"Total pages skipped (already processed or non-poem): {self.skipped_counter}")
 
     async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue):
-        """
-        Crawls the specified category recursively and adds page_ids to the queue.
-        """
+        """Crawls the category and puts page_ids into the queue."""
         processed_ids = set()
         if self.config.resume:
             processed_ids = await self.db_manager.get_all_processed_ids()
@@ -78,34 +77,30 @@ class ScraperOrchestrator:
         
         page_generator = client.get_pages_in_category_generator(self.config.category)
         
-        pbar = tqdm(desc="Crawling category pages", unit=" pages")
-        
+        pages_found = 0
         async for page in page_generator:
-            pbar.update(1)
-            page_id = page['pageid']
+            pages_found += 1
 
             if self.config.limit and (self.processed_counter + self.skipped_counter) >= self.config.limit:
                 logger.info(f"Reached scrape limit of {self.config.limit}. Stopping producer.")
                 break
 
-            if self.config.resume and page_id in processed_ids:
+            if self.config.resume and page['pageid'] in processed_ids:
                 self.skipped_counter += 1
                 continue
             
             if self.config.dry_run:
-                logger.info(f"[DRY-RUN] Would process page: {page['title']} (ID: {page_id})")
+                logger.info(f"[DRY-RUN] Would process page: {page['title']} (ID: {page['pageid']})")
                 self.processed_counter += 1
                 continue
 
             await queue.put(page)
+            self.progress_bar.total += 1
         
-        pbar.close()
-        logger.info(f"Producer has finished crawling. Total potential pages found: {pbar.n}")
+        logger.info(f"Producer has finished crawling. Found {pages_found} potential pages.")
 
     async def _consumer(self, client: WikiAPIClient, queue: asyncio.Queue):
-        """
-        Continuously fetches pages from the queue and processes them.
-        """
+        """Fetches pages from the queue, processes them, and updates progress."""
         while True:
             try:
                 page_info = await queue.get()
@@ -118,20 +113,19 @@ class ScraperOrchestrator:
                     else:
                         self.skipped_counter += 1
                 except PageProcessingError as e:
-                    logger.warning(f"Skipping page {page_info.get('title')}: {e}")
+                    logger.warning(f"Skipping page {page_info.get('title', 'N/A')}: {e}")
                     self.skipped_counter += 1
                 except Exception as e:
-                    logger.error(f"Unexpected error processing page {page_info.get('title')}: {e}", exc_info=True)
+                    logger.error(f"Unexpected error processing page {page_info.get('title', 'N/A')}: {e}", exc_info=True)
                     self.skipped_counter += 1
                 finally:
+                    self.progress_bar.update(1)
                     queue.task_done()
             except asyncio.CancelledError:
                 break
 
     async def process_page(self, client: WikiAPIClient, page_info: dict) -> PoemSchema | None:
-        """
-        Full processing pipeline for a single page.
-        """
+        """Full processing pipeline for a single page."""
         page_id = page_info['pageid']
         title = page_info['title']
         
@@ -140,11 +134,7 @@ class ScraperOrchestrator:
             raise PageProcessingError(f"No content found for page '{title}' (ID: {page_id})")
         
         try:
-            poem_schema = self.processor.process(
-                page_data=page_data,
-                lang=self.config.lang
-            )
-            return poem_schema
+            return self.processor.process(page_data=page_data, lang=self.config.lang)
         except PoemParsingError as e:
             logger.debug(f"Could not parse poem structure for '{title}': {e}")
             return None

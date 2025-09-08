@@ -5,7 +5,7 @@ from typing import Set
 
 import aiosqlite
 
-from .schemas import Poem
+from .schemas import PoemSchema
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class DatabaseManager:
             rows = await cursor.fetchall()
             return {row[0] for row in rows}
 
-    def add_poem_index_sync(self, poem: Poem, cursor: sqlite3.Cursor):
+    def add_poem_index_sync(self, poem: PoemSchema, cursor: sqlite3.Cursor):
         """
         Insère de manière synchrone l'index d'un poème dans la base de données.
         Cette méthode est conçue pour être appelée depuis le thread d'écriture dédié.

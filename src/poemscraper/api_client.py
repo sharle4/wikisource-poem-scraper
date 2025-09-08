@@ -8,24 +8,24 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/2.O.2 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/2.1.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
 def get_localized_category_prefix(lang: str) -> str:
-    """
-    Returns the localized 'Category:' prefix for a given language.
-    """
+    """Retourne le préfixe 'Catégorie:' localisé pour une langue donnée."""
     prefixes = {
-        "fr": "Catégorie", "en": "Category", "de": "Kategorie",
-        "es": "Categoría", "it": "Categoria",
+        "fr": "Catégorie",
+        "en": "Category",
+        "de": "Kategorie",
+        "es": "Categoría",
+        "it": "Categoria",
     }
     return prefixes.get(lang, "Category")
 
 class WikiAPIClient:
-    """
-    Client API MediaWiki asynchrone, respectueux des règles.
-    """
+    """Client API MediaWiki asynchrone, robuste et respectueux des règles."""
+
     def __init__(self, api_endpoint: str, max_concurrent_requests: int = 5):
         self.api_endpoint = api_endpoint
         self.headers = {"User-Agent": WIKIMEDIA_USER_AGENT}
@@ -46,95 +46,149 @@ class WikiAPIClient:
             return e.status in [429, 500, 502, 503, 504]
         return isinstance(e, (aiohttp.ClientConnectionError, asyncio.TimeoutError))
 
-    @backoff.on_exception(backoff.expo, (aiohttp.ClientError, asyncio.TimeoutError),
-                          max_tries=5, giveup=lambda e: not WikiAPIClient._should_retry(e),
-                          logger=logger)
+    @backoff.on_exception(
+        backoff.expo,
+        (aiohttp.ClientError, asyncio.TimeoutError),
+        max_tries=5,
+        giveup=lambda e: not WikiAPIClient._should_retry(e),
+        logger=logger,
+    )
     async def _make_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        if not self.session: raise RuntimeError("ClientSession not initialized.")
+        if not self.session:
+            raise RuntimeError("ClientSession not initialized.")
 
-        sanitized_params = {}
-        for key, value in params.items():
-            if value is None:
-                continue
-            if isinstance(value, bool):
-                sanitized_params[key] = str(value).lower()
-            else:
-                sanitized_params[key] = value
-
+        sanitized_params = {
+            key: str(value).lower() if isinstance(value, bool) else value
+            for key, value in params.items()
+            if value is not None
+        }
         sanitized_params.update({"format": "json", "formatversion": "2"})
-        
+
         async with self.semaphore:
             logger.debug(f"API Request: {sanitized_params}")
-            async with self.session.get(self.api_endpoint, params=sanitized_params) as response:
+            async with self.session.get(
+                self.api_endpoint, params=sanitized_params
+            ) as response:
                 response.raise_for_status()
                 data = await response.json()
-                if "error" in data: logger.error(f"MediaWiki API Error: {data['error']}")
+                if "error" in data:
+                    logger.error(f"MediaWiki API Error: {data['error']}")
                 return data
 
     async def get_page_info(self, page_titles: list[str]) -> Optional[dict]:
-        """Gets basic info for pages, resolving redirects."""
+        """Récupère les informations de base pour des pages, sans résoudre les redirections."""
+        params = {"action": "query", "prop": "info", "titles": "|".join(page_titles)}
+        data = await self._make_request(params)
+        return data.get("query")
+        
+    async def get_page_info_and_redirects(self, page_titles: list[str]) -> Optional[dict]:
+        """Récupère les informations de base et gère les redirections."""
         params = {"action": "query", "prop": "info", "titles": "|".join(page_titles), "redirects": 1}
         data = await self._make_request(params)
         return data.get("query")
 
-    async def search_for_page(self, search_term: str, namespace: int) -> Optional[str]:
-        """
-        Uses opensearch to find the most likely page title for a search term.
-        """
-        params = {"action": "opensearch", "search": search_term, "limit": 1, "namespace": namespace}
+    async def search_for_page(
+        self, search_term: str, namespace: int
+    ) -> Optional[str]:
+        """Utilise opensearch pour trouver le titre de page le plus probable."""
+        params = {
+            "action": "opensearch",
+            "search": search_term,
+            "limit": 1,
+            "namespace": namespace,
+        }
         data = await self._make_request(params)
         if isinstance(data, list) and len(data) >= 2 and data[1]:
             return data[1][0]
         return None
 
-    async def get_subcategories_generator(self, category_title: str, lang: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Lists all subcategories of a given category."""
+    async def get_subcategories_generator(
+        self, category_title: str, lang: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Liste toutes les sous-catégories d'une catégorie donnée."""
         cmcontinue = None
         cat_prefix = get_localized_category_prefix(lang)
         while True:
             params = {
-                "action": "query", "list": "categorymembers",
-                "cmtitle": f"{cat_prefix}:{category_title}", "cmtype": "subcat",
-                "cmlimit": "max", "cmprop": "title|ids", "cmcontinue": cmcontinue,
+                "action": "query",
+                "list": "categorymembers",
+                "cmtitle": f"{cat_prefix}:{category_title}",
+                "cmtype": "subcat",
+                "cmlimit": "max",
+                "cmprop": "title|ids",
+                "cmcontinue": cmcontinue,
             }
             data = await self._make_request(params)
-            for member in data.get("query", {}).get("categorymembers", []): yield member
-            if "continue" in data: cmcontinue = data["continue"]["cmcontinue"]
-            else: break
+            for member in data.get("query", {}).get("categorymembers", []):
+                yield member
+            if "continue" in data:
+                cmcontinue = data["continue"]["cmcontinue"]
+            else:
+                break
 
-    async def get_pages_in_category_generator(self, category_title: str, lang: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Lists all pages in a given category."""
+    async def get_pages_in_category_generator(
+        self, category_title: str, lang: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Liste toutes les pages d'une catégorie donnée."""
         cmcontinue = None
         cat_prefix = get_localized_category_prefix(lang)
         while True:
             params = {
-                "action": "query", "list": "categorymembers",
-                "cmtitle": f"{cat_prefix}:{category_title}", "cmtype": "page",
-                "cmlimit": "max", "cmprop": "title|ids", "cmcontinue": cmcontinue,
+                "action": "query",
+                "list": "categorymembers",
+                "cmtitle": f"{cat_prefix}:{category_title}",
+                "cmtype": "page",
+                "cmlimit": "max",
+                "cmprop": "title|ids",
+                "cmcontinue": cmcontinue,
             }
             data = await self._make_request(params)
-            for member in data.get("query", {}).get("categorymembers", []): yield member
-            if "continue" in data: cmcontinue = data["continue"]["cmcontinue"]
-            else: break
+            for member in data.get("query", {}).get("categorymembers", []):
+                yield member
+            if "continue" in data:
+                cmcontinue = data["continue"]["cmcontinue"]
+            else:
+                break
 
     async def get_rendered_html(self, page_id: int) -> Optional[str]:
-        """Fetches the rendered HTML of a page."""
-        params = {"action": "parse", "pageid": page_id, "prop": "text", "disabletoc": True, "disableeditsection": True}
+        """Récupère le HTML rendu d'une page."""
+        params = {
+            "action": "parse",
+            "pageid": page_id,
+            "prop": "text",
+            "disabletoc": True,
+            "disableeditsection": True,
+        }
         data = await self._make_request(params)
         return data.get("parse", {}).get("text")
 
     async def get_page_data_by_id(self, page_id: int) -> Optional[Dict[str, Any]]:
-        """Fetches raw wikitext and metadata for a page."""
-        params = {"action": "query", "pageids": page_id, "prop": "info|revisions", "rvprop": "ids|timestamp|content", "inprop": "url"}
+        """Récupère le wikitext brut et les métadonnées pour une page."""
+        params = {
+            "action": "query",
+            "pageids": page_id,
+            "prop": "info|revisions",
+            "rvprop": "ids|timestamp|content",
+            "inprop": "url",
+        }
         data = await self._make_request(params)
-        if not data.get("query", {}).get("pages"): return None
+        if not data.get("query", {}).get("pages"):
+            return None
         page_data = data["query"]["pages"][0]
-        if page_data.get("missing") or "invalid" in page_data: return None
+        if page_data.get("missing") or "invalid" in page_data:
+            return None
         return page_data
 
     async def get_category_info(self, category_titles: list[str], lang: str) -> dict:
-        """Checks if a list of categories are empty."""
+        """Vérifie si une liste de catégories est vide."""
         cat_prefix = get_localized_category_prefix(lang)
-        params = {"action": "query", "prop": "categoryinfo", "titles": "|".join([f"{cat_prefix}:{title}" for title in category_titles])}
+        params = {
+            "action": "query",
+            "prop": "categoryinfo",
+            "titles": "|".join([f"{cat_prefix}:{title}" for title in category_titles]),
+        }
         data = await self._make_request(params)
-        return {p['title']: p.get('categoryinfo', {}) for p in data.get("query", {}).get("pages", [])}
+        return {
+            p["title"]: p.get("categoryinfo", {})
+            for p in data.get("query", {}).get("pages", [])
+        }

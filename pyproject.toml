@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikisource_poem_scraper"
-version = "2.0.1"
-description = "Scraper robuste et asynchrone pour extraire les poèmes structurés de Wikisource via l'API MediaWiki."
+version = "2.1.0"
+description = "Scraper intelligent et asynchrone pour extraire les poèmes de Wikisource en gérant les recueils et les pages de contenu."
 readme = "README.md"
 authors = [
-  { name = "Senior Python Engineer", email = "engineer@example.com" },
+  { name = "Sharle", email = "charleskayssieh@gmail.com" },
 ]
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -18,12 +18,12 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    "Topic :: Text Processing",
+    "Topic :: Text Processing :: Markup :: HTML",
+    "Topic :: Internet :: WWW/HTTP",
     "Framework :: AsyncIO",
 ]
 dependencies = [
     "aiohttp[speedups]>=3.9.0",
-    "aiofiles>=23.0.0",
     "aiosqlite>=0.19.0",
     "backoff>=2.2.0",
     "pydantic>=2.7.0",
@@ -41,7 +41,6 @@ dev = [
     "isort>=5.13.0",
     "flake8>=7.0.0",
     "mypy>=1.9.0",
-    "requests>=2.31.0", # Déplacé ici car seulement pour les tests/outils de dev
 ]
 
 [project.scripts]

@@ -39,7 +39,7 @@ class ScraperOrchestrator:
 
         page_queue = asyncio.Queue(maxsize=self.config.workers * 2)
         
-        self.progress_bar = tqdm(desc="Processing pages", unit=" poem", total=0, dynamic_ncols=True)
+        self.progress_bar = tqdm(desc="Processing pages", unit=" poem", total=0, dynamic_ncols=True, smoothing=0.1)
 
         async with WikiAPIClient(self.api_endpoint, self.config.workers) as client:
             producer_task = asyncio.create_task(
@@ -53,14 +53,20 @@ class ScraperOrchestrator:
             
             await producer_task
 
-            await page_queue.join()
+            if self.progress_bar.total == 0:
+                 logger.info("No new pages to process.")
+            else:
+                await page_queue.join()
 
             for task in consumer_tasks:
                 task.cancel()
             
             await asyncio.gather(*consumer_tasks, return_exceptions=True)
         
+        if self.progress_bar.n < self.progress_bar.total:
+            self.progress_bar.update(self.progress_bar.total - self.progress_bar.n)
         self.progress_bar.close()
+        
         await self.db_manager.close()
         logger.info("Scraping finished.")
         logger.info(f"Total poems processed and saved: {self.processed_counter}")
@@ -78,26 +84,30 @@ class ScraperOrchestrator:
         page_generator = client.get_pages_in_category_generator(self.config.category)
         
         pages_found = 0
+        pages_enqueued = 0
         async for page in page_generator:
             pages_found += 1
+            page_id = page['pageid']
 
-            if self.config.limit and (self.processed_counter + self.skipped_counter) >= self.config.limit:
+            if self.config.limit and (pages_enqueued + self.skipped_counter) >= self.config.limit:
                 logger.info(f"Reached scrape limit of {self.config.limit}. Stopping producer.")
                 break
 
-            if self.config.resume and page['pageid'] in processed_ids:
-                self.skipped_counter += 1
+            if self.config.resume and page_id in processed_ids:
                 continue
             
             if self.config.dry_run:
-                logger.info(f"[DRY-RUN] Would process page: {page['title']} (ID: {page['pageid']})")
+                logger.info(f"[DRY-RUN] Would process page: {page['title']} (ID: {page_id})")
                 self.processed_counter += 1
                 continue
 
             await queue.put(page)
+            pages_enqueued += 1
             self.progress_bar.total += 1
         
-        logger.info(f"Producer has finished crawling. Found {pages_found} potential pages.")
+        logger.info(f"Producer finished crawling. Found {pages_found} total pages in category.")
+        logger.info(f"Enqueued {pages_enqueued} new pages for processing.")
+
 
     async def _consumer(self, client: WikiAPIClient, queue: asyncio.Queue):
         """Fetches pages from the queue, processes them, and updates progress."""

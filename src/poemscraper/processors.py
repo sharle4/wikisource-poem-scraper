@@ -50,7 +50,7 @@ class PoemProcessor:
             author=author,
             author_url=f"https://{lang}.wikisource.org/wiki/Auteur:{author.replace(' ', '_')}" if author else None,
             language=lang,
-            wikisource_url=page_data['fullurl'],
+            wikisource_url=page_data.get('fullurl', f"https://{lang}.wikisource.org/?curid={page_id}"),
             license={"name": "License not automatically detected", "url": None},
             metadata=metadata,
             raw_wikitext=wikitext,
@@ -65,16 +65,12 @@ class PoemProcessor:
     def _extract_metadata(self, parsed_wikicode: mwparserfromhell.wikicode.Wikicode) -> dict:
         """
         Extracts metadata like author, publication date, and categories.
-        
-        Decision technique: We parse templates. On Wikisource, metadata is almost
-        always stored in templates like {{Auteur}}, {{Infoédit}}, etc. This is much more
-        reliable than trying to guess from raw text.
         """
         metadata = {"categories": [], "templates": {}}
-        
-        for category in parsed_wikicode.filter_links():
-            if str(category.title).startswith("Catégorie:"):
-                cat_name = str(category.title).split(":", 1)[1]
+
+        for link in parsed_wikicode.filter_wikilinks():
+            if link.title.startswith("Catégorie:"):
+                cat_name = str(link.title).split(":", 1)[1]
                 metadata["categories"].append(cat_name)
 
         for template in parsed_wikicode.filter_templates():
@@ -85,7 +81,7 @@ class PoemProcessor:
             metadata["templates"][template_name] = params
             
             if template_name.lower() in ["auteur", "author"]:
-                if '1' in params:
+                if '1' in params and params['1']:
                     metadata['author'] = params['1']
 
         return metadata

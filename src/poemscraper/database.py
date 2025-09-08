@@ -1,28 +1,31 @@
-"""
-Manages the SQLite database for indexing poems and tracking progress.
-
-Uses aiosqlite for asynchronous database operations, which is crucial for not
-blocking the event loop while performing I/O.
-"""
 import logging
+import sqlite3
+from pathlib import Path
+from typing import Set
+
 import aiosqlite
+
 from .schemas import PoemSchema
 
 logger = logging.getLogger(__name__)
 
+def connect_sync_db(db_path: Path) -> tuple[sqlite3.Connection, sqlite3.Cursor]:
+    """Creates a standard synchronous SQLite connection for the writer thread."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    return conn, cursor
+
 class DatabaseManager:
-    """Handles all database interactions."""
-    def __init__(self, db_path):
+    """Manages asynchronous and synchronous access to the SQLite index database."""
+    def __init__(self, db_path: Path):
         self.db_path = db_path
-        self._conn = None
+        self.conn: aiosqlite.Connection | None = None
 
     async def initialize(self):
-        """Establishes the database connection and creates tables if they don't exist."""
+        """Initializes the async connection and creates the table if it doesn't exist."""
         try:
-            self._conn = await aiosqlite.connect(self.db_path)
-            await self._conn.execute("PRAGMA journal_mode=WAL;")
-            
-            await self._conn.execute("""
+            self.conn = await aiosqlite.connect(self.db_path)
+            await self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS poems (
                     page_id INTEGER PRIMARY KEY,
                     title TEXT NOT NULL,
@@ -32,49 +35,43 @@ class DatabaseManager:
                     extraction_timestamp TEXT NOT NULL
                 )
             """)
-            await self._conn.commit()
+            await self.conn.commit()
             logger.info(f"Database initialized successfully at {self.db_path}")
-        except aiosqlite.Error as e:
+        except Exception as e:
             logger.critical(f"Failed to initialize database: {e}")
             raise
 
-    async def insert_poem(self, poem_data: PoemSchema):
-        """Inserts a single poem record into the index."""
-        if not self._conn:
-            raise ConnectionError("Database is not connected.")
-        try:
-            await self._conn.execute(
-                """
-                INSERT OR REPLACE INTO poems (page_id, title, author, language, checksum_sha256, extraction_timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    poem_data.page_id,
-                    poem_data.title,
-                    poem_data.author,
-                    poem_data.language,
-                    poem_data.checksum_sha256,
-                    poem_data.extraction_timestamp.isoformat(),
-                ),
-            )
-            await self._conn.commit()
-        except aiosqlite.Error as e:
-            logger.error(f"Failed to insert poem with page_id {poem_data.page_id}: {e}")
+    async def get_all_processed_ids(self) -> Set[int]:
+        """Asynchronously fetches all page_ids already in the database."""
+        if not self.conn:
+            await self.initialize()
+        
+        async with self.conn.execute("SELECT page_id FROM poems") as cursor:
+            rows = await cursor.fetchall()
+            return {row[0] for row in rows}
 
-    async def get_all_processed_ids(self) -> set[int]:
-        """Retrieves all page_ids currently in the database for the 'resume' feature."""
-        if not self._conn:
-            raise ConnectionError("Database is not connected.")
-        try:
-            async with self._conn.execute("SELECT page_id FROM poems") as cursor:
-                rows = await cursor.fetchall()
-                return {row[0] for row in rows}
-        except aiosqlite.Error as e:
-            logger.error(f"Failed to fetch processed IDs: {e}")
-            return set()
+    def add_poem_index_sync(self, poem: PoemSchema, cursor: sqlite3.Cursor):
+        """
+        Synchronously inserts a poem's index into the database.
+        This method is designed to be called from the dedicated writer thread.
+        """
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO poems (page_id, title, author, language, checksum_sha256, extraction_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                poem.page_id,
+                poem.title,
+                poem.author,
+                poem.language,
+                poem.checksum_sha256,
+                poem.extraction_timestamp.isoformat(),
+            )
+        )
 
     async def close(self):
-        """Closes the database connection."""
-        if self._conn:
-            await self._conn.close()
+        """Closes the asynchronous database connection."""
+        if self.conn:
+            await self.conn.close()
             logger.info("Database connection closed.")

@@ -14,7 +14,7 @@ from .api_client import WikiAPIClient, get_localized_category_prefix
 from .database import DatabaseManager, connect_sync_db
 from .processors import PoemProcessor
 from .exceptions import PageProcessingError, PoemParsingError
-from .schemas import PoemSchema
+from .schemas import Poem
 from .classifier import PageClassifier, PageType
 
 logger = logging.getLogger(__name__)
@@ -322,7 +322,7 @@ class ScraperOrchestrator:
                     writer_queue.task_done()
                     break
 
-                if isinstance(result, PoemSchema):
+                if isinstance(result, Poem):
                     f_gz.write(result.model_dump_json() + "\n")
                     self.db_manager.add_poem_index_sync(result, db_cursor)
                     self.processed_counter += 1

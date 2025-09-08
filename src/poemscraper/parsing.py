@@ -1,66 +1,53 @@
-import re
-from typing import Tuple, List, Optional
+import logging
+from typing import List, Optional
+
+from bs4 import BeautifulSoup
+
 from .schemas import PoemStructure
 
-POEM_TAG_REGEX = re.compile(r"(<poem.*?>)(.*?)</poem>", re.IGNORECASE | re.DOTALL)
+logger = logging.getLogger(__name__)
 
-class WikitextParser:
+
+class PoemParser:
     """
-    Analyse le Wikitext pour extraire les structures de poèmes.
+    Analyse le HTML rendu (via un objet BeautifulSoup) pour extraire les structures de poèmes.
+    Cette approche est beaucoup plus fiable que l'analyse du wikitext pour les balises de présentation.
     """
 
     @staticmethod
-    def extract_poem_structure(wikitext: str) -> Optional[PoemStructure]:
+    def extract_poem_structure(soup: BeautifulSoup) -> Optional[PoemStructure]:
         """
-        Extrait toutes les strophes et tous les vers du wikitext basé sur les balises <poem>.
-        Gère les poèmes multiples sur une page (via plusieurs balises <poem>) en les fusionnant
-        en une seule structure.
+        Extrait les strophes et les vers du HTML en se basant sur les motifs courants de Wikisource
+        comme <div class="poem"> ou la balise <poem>.
         """
-        
-        all_stanzas: List[List[str]] = []
-        all_markers: List[str] = []
+        poem_blocks = soup.find_all(["div", "span"], class_="poem")
 
-        matches = POEM_TAG_REGEX.findall(wikitext)
+        if not poem_blocks:
+            poem_blocks = soup.find_all("poem")
 
-        if not matches:
+        if not poem_blocks:
             return None
 
-        for marker_tag, content in matches:
-            all_markers.append(marker_tag.strip())
-            
-            content_cleaned = re.sub(r"", "", content, flags=re.DOTALL)
-            content_cleaned = content_cleaned.replace("<nowiki>", "").replace("</nowiki>", "")
-            
-            raw_stanzas = re.split(r'\n\s*\n+', content_cleaned.strip())
+        all_stanzas: List[List[str]] = []
+        raw_markers: List[str] = []
+
+        for block in poem_blocks:
+            raw_markers.append(str(block.prettify().splitlines()[0]).strip())
+
+            text_content = block.get_text(separator="\n", strip=True)
+
+            raw_stanzas = text_content.split("\n\n")
 
             for raw_stanza in raw_stanzas:
-                verses_in_stanza: List[str] = []
-                stanza_text = raw_stanza.strip()
-                
-                if not stanza_text:
-                    continue
-
-                raw_lines = stanza_text.split('\n')
-                
-                for line in raw_lines:
-                    verse = line.strip()
-                    if verse:
-                        verse_cleaned = re.sub(r"\{\{.*?\}\}", "", verse)
-                        verse_cleaned = verse_cleaned.replace("'''", "").replace("''", "")
-                        
-                        if verse_cleaned.startswith(':'):
-                            verse_cleaned = verse_cleaned.lstrip(':').lstrip()
-
-                        if verse_cleaned:
-                           verses_in_stanza.append(verse_cleaned)
-
-                if verses_in_stanza:
-                    all_stanzas.append(verses_in_stanza)
+                stanza_lines = raw_stanza.strip().split("\n")
+                verses = [line.strip() for line in stanza_lines if line.strip()]
+                if verses:
+                    all_stanzas.append(verses)
 
         if not all_stanzas:
             return None
 
-        return PoemStructure(stanzas=all_stanzas, raw_markers=all_markers)
+        return PoemStructure(stanzas=all_stanzas, raw_markers=raw_markers)
 
     @staticmethod
     def create_normalized_text(structure: PoemStructure) -> str:
@@ -68,7 +55,5 @@ class WikitextParser:
         Crée un texte plat normalisé à partir de la structure extraite.
         (Vers séparés par \n, Strophes séparées par \n\n)
         """
-        stanza_texts = []
-        for stanza in structure.stanzas:
-            stanza_texts.append("\n".join(stanza))
+        stanza_texts = ["\n".join(stanza) for stanza in structure.stanzas]
         return "\n\n".join(stanza_texts)

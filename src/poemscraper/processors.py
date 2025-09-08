@@ -1,13 +1,12 @@
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 
 import mwparserfromhell
 from bs4 import BeautifulSoup, Tag
 
-from .schemas import Poem, PoemMetadata, PoemStructure
-from .parsing import WikitextParser
+from .schemas import PoemSchema, PoemMetadata
+from .parsing import PoemParser
 from .exceptions import PoemParsingError
 
 logger = logging.getLogger(__name__)
@@ -15,34 +14,35 @@ logger = logging.getLogger(__name__)
 class PoemProcessor:
     """
     Transforme les données brutes d'une page MediaWiki et le HTML rendu
-    en un objet Poem validé et nettoyé.
+    en un objet PoemSchema validé et nettoyé.
     """
 
     def process(
         self,
         page_data: dict,
-        page_html: str,
+        soup: BeautifulSoup,
         lang: str,
         wikicode: mwparserfromhell.wikicode.Wikicode,
-    ) -> Poem:
+    ) -> PoemSchema:
         """Méthode de traitement principale pour une seule page."""
         wikitext = page_data["revisions"][0]["content"]
 
-        structure = WikitextParser.extract_poem_structure(wikitext)
+        structure = PoemParser.extract_poem_structure(soup)
         if not structure or not structure.stanzas:
-            raise PoemParsingError("No poem structure found or content is empty.")
+            raise PoemParsingError(
+                "Aucune structure de poème trouvée dans le HTML ou contenu vide."
+            )
 
-        html_metadata = self._extract_html_metadata(page_html)
+        html_metadata = self._extract_html_metadata(soup)
         wikitext_metadata = self._extract_wikitext_metadata(wikicode)
 
         final_meta_dict = wikitext_metadata
         final_meta_dict.update(html_metadata)
 
         metadata_obj = PoemMetadata(**final_meta_dict)
+        normalized_text = PoemParser.create_normalized_text(structure)
 
-        normalized_text = WikitextParser.create_normalized_text(structure)
-
-        poem_obj = Poem(
+        poem_obj = PoemSchema(
             page_id=page_data["pageid"],
             revision_id=page_data["revisions"][0]["revid"],
             title=page_data["title"],
@@ -60,20 +60,9 @@ class PoemProcessor:
         )
         return poem_obj
 
-    def _extract_html_metadata(self, html: str) -> dict:
+    def _extract_html_metadata(self, soup: BeautifulSoup) -> dict:
         """Extrait les métadonnées structurées (itemprop) du HTML rendu."""
-        if not html:
-            return {}
-
-        soup = BeautifulSoup(html, "lxml")
         metadata = {}
-
-        def get_itemprop(prop: str) -> Optional[str]:
-            element: Optional[Tag] = soup.find(attrs={"itemprop": prop})
-            if not element:
-                return None
-            return element.get_text(strip=True) or element.get("content", "").strip()
-
         itemprop_map = {
             "author": "author",
             "datePublished": "publication_date",
@@ -84,21 +73,20 @@ class PoemProcessor:
         }
 
         for prop, key in itemprop_map.items():
-            value = get_itemprop(prop)
-            if value:
-                metadata[key] = value
-
+            element: Tag | None = soup.find(attrs={"itemprop": prop})
+            if element:
+                value = element.get_text(strip=True) or element.get(
+                    "content", ""
+                ).strip()
+                if value:
+                    metadata[key] = value
         return metadata
 
     def _extract_wikitext_metadata(
         self, parsed_wikicode: mwparserfromhell.wikicode.Wikicode
     ) -> dict:
-        """
-        Extrait des métadonnées de secours depuis les templates du wikitext.
-        C'est utile quand les `itemprop` ne sont pas présents.
-        """
+        """Extrait des métadonnées de secours depuis les templates du wikitext."""
         metadata = {}
-
         for template in parsed_wikicode.filter_templates():
             name = template.name.strip().lower()
 
@@ -111,9 +99,11 @@ class PoemProcessor:
             if name == "infoédit":
                 if template.has("AUTEUR"):
                     author_node = template.get("AUTEUR").value
-                    metadata.setdefault(
-                        "author", author_node.filter_wikilinks()[0].title.split(":")[-1]
-                    )
+                    if author_node.filter_wikilinks():
+                        author_name = author_node.filter_wikilinks()[0].title.split(":")[-1]
+                        metadata.setdefault("author", author_name)
+                    else:
+                         metadata.setdefault("author", author_node.strip())
                 if template.has("ANNÉE"):
                     metadata.setdefault(
                         "publication_date", template.get("ANNÉE").value.strip()
@@ -122,5 +112,4 @@ class PoemProcessor:
                     metadata.setdefault(
                         "source_collection", template.get("RECUEIL").value.strip()
                     )
-
         return metadata

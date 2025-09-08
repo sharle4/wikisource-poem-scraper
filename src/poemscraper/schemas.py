@@ -2,14 +2,6 @@ import datetime
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-class PoemLicense(BaseModel):
-    """(Optionnel) Schéma détaillé de la licence."""
-
-    name: str = Field(..., description="Nom de la licence (ex: Domaine Public)")
-    url: Optional[HttpUrl] = Field(
-        None, description="Lien direct vers le texte de la licence"
-    )
-
 
 class PoemStructure(BaseModel):
     """Structure normalisée du poème (strophes et vers)."""
@@ -19,7 +11,7 @@ class PoemStructure(BaseModel):
     )
     raw_markers: List[str] = Field(
         default_factory=list,
-        description="Marqueurs Wikitext bruts détectés pour les strophes (ex: <poem class=\"center\">).",
+        description="Marqueurs HTML bruts détectés pour les blocs de poèmes.",
     )
 
 
@@ -40,7 +32,7 @@ class PoemMetadata(BaseModel):
     license_name: Optional[str] = Field(None, description="Nom de la licence détectée.")
 
 
-class Poem(BaseModel):
+class PoemSchema(BaseModel):
     """
     Schéma JSON complet et validé pour un poème unique.
     """
@@ -52,7 +44,9 @@ class Poem(BaseModel):
         ..., description="Identifiant unique de la révision spécifique extraite (revid)."
     )
     title: str = Field(..., description="Titre canonique de la page (poème).")
-    language: str = Field(..., description="Code langue du projet Wikisource (ex: 'fr').")
+    language: str = Field(
+        ..., description="Code langue du projet Wikisource (ex: 'fr')."
+    )
     wikisource_url: HttpUrl = Field(
         ..., description="URL canonique complète vers la page du poème."
     )
@@ -62,7 +56,7 @@ class Poem(BaseModel):
 
     normalized_text: str = Field(
         ...,
-        description="Texte complet du poème, nettoyé et concaténé (vers séparés par \\n, strophes par \\n\\n).",
+        description="Texte complet du poème, nettoyé et concaténé.",
     )
     raw_wikitext: str = Field(
         ..., description="Le contenu wikitext complet et brut de la révision."
@@ -76,7 +70,7 @@ class Poem(BaseModel):
         ..., description="Timestamp ISO 8601 (UTC) de l'extraction."
     )
     provenance: Literal["api"] = Field(
-        "api", description="Source de la donnée (actuellement 'api' par défaut)."
+        "api", description="Source de la donnée."
     )
 
     @field_validator("extraction_timestamp", mode="before")

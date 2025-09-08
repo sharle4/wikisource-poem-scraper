@@ -1,5 +1,5 @@
 import asyncio
-import logging
+import functools
 import gzip
 import json
 import queue
@@ -14,7 +14,7 @@ from .api_client import WikiAPIClient, get_localized_category_prefix
 from .database import DatabaseManager, connect_sync_db
 from .processors import PoemProcessor
 from .exceptions import PageProcessingError, PoemParsingError
-from .schemas import Poem
+from .schemas import PoemSchema
 from .classifier import PageClassifier, PageType
 
 logger = logging.getLogger(__name__)
@@ -226,20 +226,24 @@ class ScraperOrchestrator:
 
                 if not page_data or not page_html:
                     raise PageProcessingError("Missing page data or rendered HTML.")
-                
-                wikitext = page_data.get('revisions', [{}])[0].get('content', '')
+
+                soup = BeautifulSoup(page_html, "lxml")
+
+                wikitext = page_data.get("revisions", [{}])[0].get("content", "")
                 if not wikitext:
                     raise PageProcessingError("Page has no wikitext content.")
-                
+
                 wikicode = mwparserfromhell.parse(wikitext)
-                
-                classifier = PageClassifier(page_data, page_html, self.config.lang, wikicode)
+
+                classifier = PageClassifier(
+                    page_data, soup, self.config.lang, wikicode
+                )
                 page_type = classifier.classify()
 
                 if page_type == PageType.POEM:
                     try:
                         poem_data = self.processor.process(
-                            page_data, page_html, self.config.lang, wikicode
+                            page_data, soup, self.config.lang, wikicode
                         )
                         await loop.run_in_executor(
                             None, functools.partial(writer_queue.put, poem_data)
@@ -247,7 +251,7 @@ class ScraperOrchestrator:
                         self.processed_ids.add(page_id)
                     except PoemParsingError as e:
                         logger.warning(
-                            f"Page {page_info.get('title', 'N/A')} (ID: {page_id}) looked like a poem but failed parsing: {e}"
+                            f"Page {page_info.get('title', 'N/A')} (ID: {page_id}) failed parsing: {e}"
                         )
                         self.skipped_counter += 1
 
@@ -260,15 +264,15 @@ class ScraperOrchestrator:
                         await self._enqueue_new_titles(
                             client, page_queue, list(sub_titles), pbar
                         )
-                    self.skipped_counter += 1
                     self.processed_ids.add(page_id)
+                    self.skipped_counter += 1
 
                 else:
                     logger.debug(
                         f"Skipping page '{page_info.get('title')}' classified as {page_type.name}."
                     )
-                    self.skipped_counter += 1
                     self.processed_ids.add(page_id)
+                    self.skipped_counter += 1
 
             except Exception as e:
                 logger.error(
@@ -322,7 +326,7 @@ class ScraperOrchestrator:
                     writer_queue.task_done()
                     break
 
-                if isinstance(result, Poem):
+                if isinstance(result, PoemSchema):
                     f_gz.write(result.model_dump_json() + "\n")
                     self.db_manager.add_poem_index_sync(result, db_cursor)
                     self.processed_counter += 1

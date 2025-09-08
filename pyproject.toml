@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wikisource_poem_scraper"
+version = "1.0.0"
+description = "Scraper robuste et asynchrone pour extraire les poèmes structurés de Wikisource via l'API MediaWiki."
+readme = "README.md"
+authors = [
+  { name = "Senior Python Engineer", email = "engineer@example.com" },
+]
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Text Processing",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "aiohttp[speedups]>=3.9.0",  # Client HTTP asynchrone
+    "aiofiles>=23.0.0",         # IO de fichiers asynchrone
+    "aiosqlite>=0.19.0",        # Base de données SQLite asynchrone
+    "backoff>=2.2.0",           # Stratégie de retry (backoff exponentiel)
+    "pydantic>=2.7.0",          # Validation et typage des schémas de données
+    "tqdm>=4.66.0",             # Barres de progression
+    "mwparserfromhell>=0.6.0",  # Parsing avancé du Wikitext (crucial pour les templates/métadonnées)
+    "requests>=2.31.0"          # (Utilisé par mwclient, ou pour robots.txt synchrone si nécessaire)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "flake8>=7.0.0",
+    "mypy>=1.9.0",
+]
+
+[project.scripts]
+poemscraper = "poemscraper.cli:main_cli" # Permet d'appeler 'poemscraper' directement après install
+
+[tool.setuptools]
+packages = ["src"]

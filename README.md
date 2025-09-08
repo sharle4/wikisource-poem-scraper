@@ -55,3 +55,19 @@ Le module peut être exécuté directement.
 
 ```bash
 python -m poemscraper [OPTIONS]
+
+Arguments :
+
+--lang (requis) : Code langue du Wikisource à cibler (ex: fr, en, de).
+
+--category (requis) : Catégorie racine de laquelle démarrer le crawl (ex: Poèmes, Poésie).
+
+--output_dir : Répertoire de sortie pour les fichiers (Défaut: ./data/).
+
+--workers : Nombre de workers concurrents (requêtes API parallèles). (Défaut: 5).
+
+--limit : Limiter le nombre total de poèmes à extraire (utile pour les tests).
+
+--resume : Active le mode reprise. Ignore les page_id déjà présents dans l'index SQLite.
+
+--dry-run : Analyse les catégories et identifie les pages, mais n'effectue pas l'extraction complète.

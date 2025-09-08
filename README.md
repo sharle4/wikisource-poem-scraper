@@ -55,6 +55,7 @@ Le module peut être exécuté directement.
 
 ```bash
 python -m poemscraper [OPTIONS]
+```
 
 Arguments :
 

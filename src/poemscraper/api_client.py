@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, AsyncGenerator
+
 import aiohttp
 import backoff
 
@@ -12,97 +13,98 @@ WIKIMEDIA_USER_AGENT = (
 )
 
 class WikiAPIClient:
-    """
-    Client API MediaWiki asynchrone, respectueux des règles, avec gestion
-    des sémaphores, des retries et du User-Agent.
-    """
     def __init__(self, api_endpoint: str, max_concurrent_requests: int = 5):
         self.api_endpoint = api_endpoint
         self.headers = {"User-Agent": WIKIMEDIA_USER_AGENT}
-        
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-        
         self.session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
-        """Initialise la session aiohttp."""
         self.session = aiohttp.ClientSession(headers=self.headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Ferme la session aiohttp."""
         if self.session:
             await self.session.close()
 
-    def _should_retry(e: Exception) -> bool:
-        """Détermine si une exception doit déclencher un retry (ex: erreurs réseau, 503)."""
+    @staticmethod
+    def _is_retryable(e: Exception) -> bool:
         if isinstance(e, aiohttp.ClientResponseError):
             return e.status in [429, 500, 502, 503, 504]
-        if isinstance(e, (aiohttp.ClientConnectionError, asyncio.TimeoutError)):
-            return True
-        return False
+        return isinstance(e, (aiohttp.ClientConnectionError, asyncio.TimeoutError))
 
-    @backoff.on_exception(backoff.expo,
-                          (aiohttp.ClientError, asyncio.TimeoutError),
-                          max_tries=5,
-                          giveup=_should_retry,
-                          logger=logger)
+    @backoff.on_exception(
+        backoff.expo,
+        (aiohttp.ClientError, asyncio.TimeoutError),
+        max_tries=5,
+        giveup=lambda e: not WikiAPIClient._is_retryable(e),
+        logger=logger,
+    )
     async def _make_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Méthode de requête interne, gérée par le sémaphore et backoff."""
         if not self.session:
-            raise RuntimeError("ClientSession non initialisée. Utiliser 'async with WikiAPIClient(...)'.")
-
+            raise RuntimeError("ClientSession not initialized.")
+        
         params.update({"format": "json", "formatversion": "2"})
-
+        
         async with self.semaphore:
-            logger.debug(f"Début requête API : {params.get('action')}, page : {params.get('titles') or params.get('pageids')}")
+            logger.debug(f"Requesting API with params: {params}")
             try:
-                async with self.session.get(self.api_endpoint, params=params) as response:
+                async with self.session.get(self.api_endpoint, params=params, timeout=30) as response:
                     response.raise_for_status()
                     data = await response.json()
-                    
                     if "error" in data:
-                        logger.error(f"Erreur API MediaWiki : {data['error']}")
-                    
+                        logger.error(f"MediaWiki API error: {data['error']}")
                     return data
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.warning(f"Erreur réseau/serveur pendant l'appel API ({e}). Tentative de retry...")
+                logger.warning(f"Network/Server error during API call ({type(e).__name__}). Retrying...")
                 raise
 
     async def get_page_data_by_id(self, page_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Récupère toutes les données nécessaires pour une page (wikitext, révision, catégories)
-        """
         params = {
             "action": "query",
             "pageids": page_id,
-            "prop": "info|revisions|categories|templates",
+            "prop": "info|revisions|categories",
+            "inprop": "url",
             "rvprop": "ids|timestamp|content",
             "cllimit": "max",
-            "tllimit": "max",
         }
         data = await self._make_request(params)
-        
-        if not data.get("query", {}).get("pages"):
-             logger.warning(f"Page non trouvée ou réponse invalide pour pageid: {page_id}")
-             return None
-             
-        page_data = data["query"]["pages"][0]
-        
+        page_data = data.get("query", {}).get("pages", [{}])[0]
         if page_data.get("missing") or "invalid" in page_data:
-            logger.info(f"Page marquée comme 'missing' ou 'invalid' : {page_id}")
+            logger.info(f"Page ID {page_id} is missing or invalid.")
             return None
-            
         return page_data
 
-    async def get_rendered_html(self, page_id: int) -> Optional[str]:
-        """Récupère le HTML rendu (optionnel)."""
+    async def get_pages_in_category_generator(self, category_name: str) -> AsyncGenerator[Dict, None]:
+        """
+        **Scalable Method**: Yields pages from a category and its subcategories.
+        
+        This uses an API generator (`categorymembers`) to fetch pages in chunks,
+        avoiding loading thousands of page titles into memory at once.
+        """
         params = {
-            "action": "parse",
-            "pageid": page_id,
-            "prop": "text",
+            "action": "query",
+            "list": "categorymembers",
+            "cmtitle": f"Category:{category_name}",
+            "cmlimit": "500",
+            "cmprop": "ids|title|type",
         }
-        data = await self._make_request(params)
-        if data and "parse" in data and "text" in data["parse"]:
-            return data["parse"]["text"]
-        return None
+        cmcontinue = None
+        while True:
+            if cmcontinue:
+                params["cmcontinue"] = cmcontinue
+            
+            data = await self._make_request(params)
+            
+            members = data.get("query", {}).get("categorymembers", [])
+            for member in members:
+                if member['type'] == 'subcat':
+                    async for sub_page in self.get_pages_in_category_generator(member['title'].split(':', 1)[1]):
+                        yield sub_page
+                elif member['type'] == 'page':
+                    yield member
+
+            if "continue" in data:
+                cmcontinue = data["continue"]["cmcontinue"]
+            else:
+                break

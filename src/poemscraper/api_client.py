@@ -8,7 +8,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/2.1.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/2.4.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -24,8 +24,9 @@ def get_localized_category_prefix(lang: str) -> str:
     return prefixes.get(lang, "Category")
 
 class WikiAPIClient:
-    """Client API MediaWiki asynchrone, robuste et respectueux des règles."""
-
+    """
+    Client API MediaWiki asynchrone, robuste et respectueux des règles.
+    """
     def __init__(self, api_endpoint: str, max_concurrent_requests: int = 5):
         self.api_endpoint = api_endpoint
         self.headers = {"User-Agent": WIKIMEDIA_USER_AGENT}
@@ -46,57 +47,42 @@ class WikiAPIClient:
             return e.status in [429, 500, 502, 503, 504]
         return isinstance(e, (aiohttp.ClientConnectionError, asyncio.TimeoutError))
 
-    @backoff.on_exception(
-        backoff.expo,
-        (aiohttp.ClientError, asyncio.TimeoutError),
-        max_tries=5,
-        giveup=lambda e: not WikiAPIClient._should_retry(e),
-        logger=logger,
-    )
+    @backoff.on_exception(backoff.expo, (aiohttp.ClientError, asyncio.TimeoutError),
+                          max_tries=5, giveup=lambda e: not WikiAPIClient._should_retry(e),
+                          logger=logger)
     async def _make_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        if not self.session:
-            raise RuntimeError("ClientSession not initialized.")
+        if not self.session: raise RuntimeError("ClientSession not initialized.")
 
-        sanitized_params = {
-            key: str(value).lower() if isinstance(value, bool) else value
-            for key, value in params.items()
-            if value is not None
-        }
+        sanitized_params = {}
+        for key, value in params.items():
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                sanitized_params[key] = str(value).lower()
+            else:
+                sanitized_params[key] = value
+
         sanitized_params.update({"format": "json", "formatversion": "2"})
-
+        
         async with self.semaphore:
             logger.debug(f"API Request: {sanitized_params}")
-            async with self.session.get(
-                self.api_endpoint, params=sanitized_params
-            ) as response:
+            async with self.session.get(self.api_endpoint, params=sanitized_params) as response:
                 response.raise_for_status()
                 data = await response.json()
-                if "error" in data:
-                    logger.error(f"MediaWiki API Error: {data['error']}")
+                if "error" in data: logger.error(f"MediaWiki API Error: {data['error']}")
                 return data
 
-    async def get_page_info(self, page_titles: list[str]) -> Optional[dict]:
-        """Récupère les informations de base pour des pages, sans résoudre les redirections."""
-        params = {"action": "query", "prop": "info", "titles": "|".join(page_titles)}
-        data = await self._make_request(params)
-        return data.get("query")
-        
     async def get_page_info_and_redirects(self, page_titles: list[str]) -> Optional[dict]:
-        """Récupère les informations de base et gère les redirections."""
+        """Gets basic info for pages, resolving redirects."""
         params = {"action": "query", "prop": "info", "titles": "|".join(page_titles), "redirects": 1}
         data = await self._make_request(params)
         return data.get("query")
 
-    async def search_for_page(
-        self, search_term: str, namespace: int
-    ) -> Optional[str]:
-        """Utilise opensearch pour trouver le titre de page le plus probable."""
-        params = {
-            "action": "opensearch",
-            "search": search_term,
-            "limit": 1,
-            "namespace": namespace,
-        }
+    async def search_for_page(self, search_term: str, namespace: int) -> Optional[str]:
+        """
+        Uses opensearch to find the most likely page title for a search term.
+        """
+        params = {"action": "opensearch", "search": search_term, "limit": 1, "namespace": namespace}
         data = await self._make_request(params)
         if isinstance(data, list) and len(data) >= 2 and data[1]:
             return data[1][0]
@@ -151,36 +137,29 @@ class WikiAPIClient:
                 break
 
     async def get_rendered_html(self, page_id: int) -> Optional[str]:
-        """Récupère le HTML rendu d'une page."""
-        params = {
-            "action": "parse",
-            "pageid": page_id,
-            "prop": "text",
-            "disabletoc": True,
-            "disableeditsection": True,
-        }
+        """Fetches the rendered HTML of a page."""
+        params = {"action": "parse", "pageid": page_id, "prop": "text", "disabletoc": True, "disableeditsection": True}
         data = await self._make_request(params)
         return data.get("parse", {}).get("text")
 
     async def get_page_data_by_id(self, page_id: int) -> Optional[Dict[str, Any]]:
-        """Récupère le wikitext brut et les métadonnées pour une page."""
+        """Fetches raw wikitext, categories, and metadata for a page."""
         params = {
             "action": "query",
             "pageids": page_id,
-            "prop": "info|revisions",
+            "prop": "info|revisions|categories",
             "rvprop": "ids|timestamp|content",
             "inprop": "url",
+            "cllimit": "max"
         }
         data = await self._make_request(params)
-        if not data.get("query", {}).get("pages"):
-            return None
+        if not data.get("query", {}).get("pages"): return None
         page_data = data["query"]["pages"][0]
-        if page_data.get("missing") or "invalid" in page_data:
-            return None
+        if page_data.get("missing") or "invalid" in page_data: return None
         return page_data
 
     async def get_category_info(self, category_titles: list[str], lang: str) -> dict:
-        """Vérifie si une liste de catégories est vide."""
+        """Check if a list of categories is empty."""
         cat_prefix = get_localized_category_prefix(lang)
         params = {
             "action": "query",

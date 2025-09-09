@@ -1,6 +1,8 @@
 import asyncio
 import functools
 import gzip
+import json
+import re
 import queue
 import functools
 import logging
@@ -282,21 +284,21 @@ class ScraperOrchestrator:
                         )
                         self.skipped_counter += 1
 
-                elif page_type == PageType.COLLECTION:
-                    logger.info(
-                        f"Page '{page_info.get('title')}' is a collection. Extracting sub-pages."
-                    )
+                elif page_type in [PageType.POETIC_COLLECTION, PageType.MULTI_VERSION_HUB]:
+                    logger.info(f"Page '{page_title}' is a {page_type.name}. Extracting sub-pages.")
                     sub_titles = classifier.extract_sub_page_titles()
                     if sub_titles:
                         await self._enqueue_new_titles(
-                            client, page_queue, list(sub_titles), pbar, page_title, author_cat
+                            client, page_queue, list(sub_titles), pbar, 
+                            current_parent_title=page_title,
+                            author_cat=author_cat
                         )
                     self.processed_ids.add(page_id)
                     self.skipped_counter += 1
 
                 else:
                     logger.debug(
-                        f"Skipping page '{page_info.get('title')}' classified as {page_type.name}."
+                        f"Skipping page '{page_title}' classified as {page_type.name}."
                     )
                     self.processed_ids.add(page_id)
                     self.skipped_counter += 1

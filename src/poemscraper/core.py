@@ -189,6 +189,7 @@ class ScraperOrchestrator:
                     wikicode = mwparserfromhell.parse(wikitext)
                     
                     classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
+                    signals = classifier._get_page_signals()
                     page_type = classifier.classify()
 
                     if self.tree_logger:
@@ -204,7 +205,7 @@ class ScraperOrchestrator:
                     
                     elif page_type in [PageType.POETIC_COLLECTION, PageType.MULTI_VERSION_HUB]:
                         logger.info(f"Page '{page_title}' is a {page_type.name}. Extracting and enqueuing sub-pages.")
-                        sub_titles = classifier.extract_sub_page_titles()
+                        sub_titles = signals.get("sub_page_titles", [])
                         if sub_titles:
                             await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
                         self.skipped_counter += 1

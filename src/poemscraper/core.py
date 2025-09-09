@@ -111,22 +111,22 @@ class ScraperOrchestrator:
             full_cat_title = corrected_title
 
         logger.info(f"Phase 1: Discovering author subcategories in '{full_cat_title}'...")
-        author_cats = [
-            cat for cat in client.get_subcategories_generator(full_cat_title.split(":",1)[1], self.config.lang)
+        
+        author_cat_titles = [
+            cat['title'].split(":", 1)[1]
+            async for cat in client.get_subcategories_generator(full_cat_title.split(":", 1)[1], self.config.lang)
         ]
-        
-        logger.info(
-            f"Found {len(author_cats)} potential author categories. Checking which are non-empty..."
-        )
-        
+        logger.info(f"Found {len(author_cat_titles)} potential author categories. Checking which are non-empty...")
+
         non_empty_author_cats = []
-        if author_cats:
-            for i in range(0, len(author_cats), 50):
-                batch_titles = author_cats[i : i + 50]
+        if author_cat_titles:
+            for i in range(0, len(author_cat_titles), 50):
+                batch_titles = author_cat_titles[i:i + 50]
                 info = await client.get_category_info(batch_titles, self.config.lang)
                 for title, cat_info in info.items():
-                    if cat_info.get("pages", 0) > 0:
+                    if cat_info.get('pages', 0) > 0 or cat_info.get('subcats', 0) > 0:
                         non_empty_author_cats.append(title.split(":", 1)[1])
+
         logger.info(f"Found {len(non_empty_author_cats)} non-empty author categories. Discovering pages...")
         
         enqueued_count = 0

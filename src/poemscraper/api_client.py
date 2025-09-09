@@ -8,24 +8,23 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/2.5.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/2.5.1 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
 def get_localized_category_prefix(lang: str) -> str:
-    """Retourne le préfixe 'Catégorie:' localisé pour une langue donnée."""
+    """
+    Returns the localized 'Category:' prefix for a given language.
+    """
     prefixes = {
-        "fr": "Catégorie",
-        "en": "Category",
-        "de": "Kategorie",
-        "es": "Categoría",
-        "it": "Categoria",
+        "fr": "Catégorie", "en": "Category", "de": "Kategorie",
+        "es": "Categoría", "it": "Categoria",
     }
     return prefixes.get(lang, "Category")
 
 class WikiAPIClient:
     """
-    Client API MediaWiki asynchrone, robuste et respectueux des règles.
+    Client API MediaWiki asynchrone, respectueux des règles.
     """
     def __init__(self, api_endpoint: str, max_concurrent_requests: int = 5):
         self.api_endpoint = api_endpoint
@@ -88,21 +87,15 @@ class WikiAPIClient:
             return data[1][0]
         return None
 
-    async def get_subcategories_generator(
-        self, category_title: str, lang: str
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Liste toutes les sous-catégories d'une catégorie donnée."""
+    async def get_subcategories_generator(self, category_title: str, lang: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Lists all subcategories of a given category."""
         cmcontinue = None
         cat_prefix = get_localized_category_prefix(lang)
         while True:
             params = {
-                "action": "query",
-                "list": "categorymembers",
-                "cmtitle": f"{cat_prefix}:{category_title}",
-                "cmtype": "subcat",
-                "cmlimit": "max",
-                "cmprop": "title|ids",
-                "cmcontinue": cmcontinue,
+                "action": "query", "list": "categorymembers",
+                "cmtitle": f"{cat_prefix}:{category_title}", "cmtype": "subcat",
+                "cmlimit": "max", "cmprop": "title|ids", "cmcontinue": cmcontinue,
             }
             data = await self._make_request(params)
             for member in data.get("query", {}).get("categorymembers", []):
@@ -112,21 +105,15 @@ class WikiAPIClient:
             else:
                 break
 
-    async def get_pages_in_category_generator(
-        self, category_title: str, lang: str
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Liste toutes les pages d'une catégorie donnée."""
+    async def get_pages_in_category_generator(self, category_title: str, lang: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Lists all pages in a given category."""
         cmcontinue = None
         cat_prefix = get_localized_category_prefix(lang)
         while True:
             params = {
-                "action": "query",
-                "list": "categorymembers",
-                "cmtitle": f"{cat_prefix}:{category_title}",
-                "cmtype": "page",
-                "cmlimit": "max",
-                "cmprop": "title|ids",
-                "cmcontinue": cmcontinue,
+                "action": "query", "list": "categorymembers",
+                "cmtitle": f"{cat_prefix}:{category_title}", "cmtype": "page",
+                "cmlimit": "max", "cmprop": "title|ids", "cmcontinue": cmcontinue,
             }
             data = await self._make_request(params)
             for member in data.get("query", {}).get("categorymembers", []):
@@ -159,15 +146,17 @@ class WikiAPIClient:
         return page_data
 
     async def get_category_info(self, category_titles: list[str], lang: str) -> dict:
-        """Check if a list of categories is empty."""
+        """Checks if a list of categories are empty."""
         cat_prefix = get_localized_category_prefix(lang)
         params = {
-            "action": "query",
-            "prop": "categoryinfo",
-            "titles": "|".join([f"{cat_prefix}:{title}" for title in category_titles]),
+            "action": "query", 
+            "prop": "categoryinfo", 
+            "titles": "|".join([f"{cat_prefix}:{title}" for title in category_titles])
         }
         data = await self._make_request(params)
-        return {
-            p["title"]: p.get("categoryinfo", {})
-            for p in data.get("query", {}).get("pages", [])
-        }
+        results = {}
+        pages = data.get("query", {}).get("pages", [])
+        for p in pages:
+            if "missing" not in p:
+                results[p['title']] = p.get('categoryinfo', {})
+        return results

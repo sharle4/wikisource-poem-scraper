@@ -88,7 +88,9 @@ class ScraperOrchestrator:
         await self.db_manager.close()
         logger.info("Scraping finished.")
         logger.info(f"Total poems processed and saved: {self.processed_counter}")
-        logger.info(f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}")
+        logger.info(
+            f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}"
+        )
 
     async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue):
         """Trouve et met en file les pages à traiter."""
@@ -97,7 +99,20 @@ class ScraperOrchestrator:
 
         if self.config.sub_category:
             logger.info(f"Targeting single sub-category: '{self.config.sub_category}'")
-            author_cats_to_process.append(self.config.sub_category)
+            sub_cat_title = self.config.sub_category
+            full_sub_cat_title = f"{cat_prefix}:{sub_cat_title}"
+            
+            page_info = await client.get_page_info_and_redirects([full_sub_cat_title])
+            if not page_info or not page_info.get("pages") or "missing" in page_info["pages"][0]:
+                logger.warning(f"Sub-category '{full_sub_cat_title}' not found. Attempting search...")
+                corrected_title = await client.search_for_page(full_sub_cat_title, namespace=14)
+                if not corrected_title:
+                    logger.critical(f"Sub-category '{sub_cat_title}' not found even with search. Aborting.")
+                    return
+                logger.info(f"Found likely match: '{corrected_title}'. Using this title.")
+                author_cats_to_process.append(corrected_title.split(":", 1)[1])
+            else:
+                author_cats_to_process.append(sub_cat_title)
         else:
             logger.info(f"Root category: '{self.config.category}'")
             root_cat_title = self.config.category
@@ -105,19 +120,24 @@ class ScraperOrchestrator:
             full_cat_title = f"{cat_prefix}:{root_cat_title}"
             page_info = await client.get_page_info_and_redirects([full_cat_title])
             if not page_info or not page_info.get("pages") or "missing" in page_info["pages"][0]:
-                logger.warning(f"Category '{full_cat_title}' not found. Aborting.")
-                return
+                logger.warning(f"Category '{full_cat_title}' not found. Attempting search...")
+                corrected_title = await client.search_for_page(full_cat_title, namespace=14)
+                if not corrected_title:
+                    logger.critical(f"Root category '{root_cat_title}' not found even with search. Aborting.")
+                    return
+                logger.info(f"Found likely match: '{corrected_title}'. Using this title.")
+                root_cat_title = corrected_title.split(":", 1)[1]
 
             logger.info(f"Phase 1: Discovering author subcategories in '{root_cat_title}'...")
-            author_cat_titles = [
+            sub_cat_titles = [
                 cat['title'].split(":", 1)[1]
                 async for cat in client.get_subcategories_generator(root_cat_title, self.config.lang)
             ]
-            logger.info(f"Found {len(author_cat_titles)} potential author categories. Checking which are non-empty...")
+            logger.info(f"Found {len(sub_cat_titles)} potential author categories. Checking which are non-empty...")
 
-            if author_cat_titles:
-                for i in range(0, len(author_cat_titles), 50):
-                    batch_titles = author_cat_titles[i:i + 50]
+            if sub_cat_titles:
+                for i in range(0, len(sub_cat_titles), 50):
+                    batch_titles = sub_cat_titles[i:i + 50]
                     info = await client.get_category_info(batch_titles, self.config.lang)
                     for title_with_prefix, cat_info in info.items():
                         if cat_info.get('pages', 0) > 0 or cat_info.get('subcats', 0) > 0:

@@ -1,4 +1,4 @@
 """
 Wikisource Poem Scraper Package.
 """
-version = "2.7.1"
+version = "2.7.2"

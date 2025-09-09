@@ -112,7 +112,7 @@ class ScraperOrchestrator:
         cat_prefix = get_localized_category_prefix(self.config.lang)
         full_cat_title = f"{cat_prefix}:{self.config.category}"
 
-        page_info = await client.get_page_info([full_cat_title])
+        page_info = await client.get_page_info_and_redirects([full_cat_title])
 
         if not page_info or not page_info.get("pages"):
             logger.critical(
@@ -139,7 +139,7 @@ class ScraperOrchestrator:
             logger.info(
                 f"Found likely match via search: '{corrected_title}'. Using this title."
             )
-            page_info = await client.get_page_info([corrected_title])
+            page_info = await client.get_page_info_and_redirects([corrected_title])
             page_details = page_info["pages"][0]
             if "missing" in page_details:
                 logger.critical(

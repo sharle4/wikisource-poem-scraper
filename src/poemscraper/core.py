@@ -48,6 +48,7 @@ class ScraperOrchestrator:
     async def run(self):
         """Méthode d'exécution principale."""
         logger.info(f"Starting intelligent scraper for '{self.config.lang}.wikisource.org'")
+        logger.info(f"Root category: '{self.config.category}'")
         
         await self.db_manager.initialize()
 
@@ -66,7 +67,7 @@ class ScraperOrchestrator:
         async with WikiAPIClient(self.api_endpoint, self.config.workers) as client:
             producer_task = asyncio.create_task(self._producer(client, page_queue))
 
-            with tqdm(desc="Processing pages", unit=" page", dynamic_ncols=True, total=0) as pbar:
+            with tqdm(desc="Processing pages", unit=" page", dynamic_ncols=True) as pbar:
                 consumer_tasks = [
                     asyncio.create_task(self._consumer(client, page_queue, writer_sync_queue, pbar))
                     for _ in range(self.config.workers)
@@ -93,70 +94,52 @@ class ScraperOrchestrator:
         )
 
     async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue):
-        """Trouve et met en file les pages à traiter."""
+        """Trouve et met en file les pages initiales des catégories d'auteurs."""
+        logger.info(f"Normalizing root category title '{self.config.category}'...")
         cat_prefix = get_localized_category_prefix(self.config.lang)
-        author_cats_to_process = []
+        full_cat_title = f"{cat_prefix}:{self.config.category}"
+        
+        page_info = await client.get_page_info_and_redirects([full_cat_title])
 
-        if self.config.sub_category:
-            logger.info(f"Targeting single sub-category: '{self.config.sub_category}'")
-            sub_cat_title = self.config.sub_category
-            full_sub_cat_title = f"{cat_prefix}:{sub_cat_title}"
-            
-            page_info = await client.get_page_info_and_redirects([full_sub_cat_title])
-            if not page_info or not page_info.get("pages") or "missing" in page_info["pages"][0]:
-                logger.warning(f"Sub-category '{full_sub_cat_title}' not found. Attempting search...")
-                corrected_title = await client.search_for_page(full_sub_cat_title, namespace=14)
-                if not corrected_title:
-                    logger.critical(f"Sub-category '{sub_cat_title}' not found even with search. Aborting.")
-                    return
-                logger.info(f"Found likely match: '{corrected_title}'. Using this title.")
-                author_cats_to_process.append(corrected_title.split(":", 1)[1])
-            else:
-                author_cats_to_process.append(sub_cat_title)
-        else:
-            logger.info(f"Root category: '{self.config.category}'")
-            root_cat_title = self.config.category
-            
-            full_cat_title = f"{cat_prefix}:{root_cat_title}"
-            page_info = await client.get_page_info_and_redirects([full_cat_title])
-            if not page_info or not page_info.get("pages") or "missing" in page_info["pages"][0]:
-                logger.warning(f"Category '{full_cat_title}' not found. Attempting search...")
-                corrected_title = await client.search_for_page(full_cat_title, namespace=14)
-                if not corrected_title:
-                    logger.critical(f"Root category '{root_cat_title}' not found even with search. Aborting.")
-                    return
-                logger.info(f"Found likely match: '{corrected_title}'. Using this title.")
-                root_cat_title = corrected_title.split(":", 1)[1]
+        if not page_info or not page_info.get("pages") or "missing" in page_info["pages"][0]:
+            logger.warning(f"Category '{full_cat_title}' not found. Attempting search...")
+            corrected_title = await client.search_for_page(full_cat_title, namespace=14)
+            if not corrected_title:
+                logger.critical(f"Root category '{self.config.category}' not found. Aborting.")
+                return
+            logger.info(f"Found likely match: '{corrected_title}'. Using this title.")
+            full_cat_title = corrected_title
 
-            logger.info(f"Phase 1: Discovering author subcategories in '{root_cat_title}'...")
-            sub_cat_titles = [
-                cat['title'].split(":", 1)[1]
-                async for cat in client.get_subcategories_generator(root_cat_title, self.config.lang)
-            ]
-            logger.info(f"Found {len(sub_cat_titles)} potential author categories. Checking which are non-empty...")
+        logger.info(f"Phase 1: Discovering author subcategories in '{full_cat_title}'...")
+        
+        author_cat_titles = [
+            cat['title']
+            async for cat in client.get_subcategories_generator(full_cat_title, self.config.lang)
+        ]
+        logger.info(f"Found {len(author_cat_titles)} potential author categories. Checking which are non-empty...")
 
-            if sub_cat_titles:
-                for i in range(0, len(sub_cat_titles), 50):
-                    batch_titles = sub_cat_titles[i:i + 50]
-                    info = await client.get_category_info(batch_titles, self.config.lang)
-                    for title_with_prefix, cat_info in info.items():
-                        if cat_info.get('pages', 0) > 0 or cat_info.get('subcats', 0) > 0:
-                            author_cats_to_process.append(title_with_prefix.split(":", 1)[1])
+        non_empty_author_cats = []
+        if author_cat_titles:
+            for i in range(0, len(author_cat_titles), 50):
+                batch_titles = author_cat_titles[i:i + 50]
+                info = await client.get_category_info(batch_titles)
+                for title, cat_info in info.items():
+                    if cat_info.get('pages', 0) > 0 or cat_info.get('subcats', 0) > 0:
+                        non_empty_author_cats.append(title)
 
-        logger.info(f"Found {len(author_cats_to_process)} non-empty categories to process. Discovering pages...")
+        logger.info(f"Found {len(non_empty_author_cats)} non-empty author categories. Discovering pages...")
         
         enqueued_count = 0
-        if author_cats_to_process:
-            with tqdm(total=len(author_cats_to_process), desc="Discovering pages", unit=" author_cat") as pbar:
-                for author_cat in author_cats_to_process:
-                    author_cat_full_title = f"{cat_prefix}:{author_cat}"
-                    async for page in client.get_pages_in_category_generator(author_cat, self.config.lang):
+        if non_empty_author_cats:
+            with tqdm(total=len(non_empty_author_cats), desc="Discovering pages", unit=" author_cat") as pbar:
+                for author_cat_full_title in non_empty_author_cats:
+                    async for page in client.get_pages_in_category_generator(author_cat_full_title, self.config.lang):
                         if self.config.limit and enqueued_count >= self.config.limit: break
                         if page['pageid'] not in self.processed_ids:
                             await queue.put({
                                 'page_info': page,
                                 'parent_title': author_cat_full_title,
-                                'author_cat': author_cat_full_title
+                                'author_cat': author_cat_full_title 
                             })
                             enqueued_count += 1
                     pbar.update(1)
@@ -171,6 +154,7 @@ class ScraperOrchestrator:
         writer_queue: queue.Queue,
         pbar: tqdm,
     ):
+        """Consomme les pages, les traite et envoie les poèmes valides à la file d'attente d'écriture."""
         loop = asyncio.get_running_loop()
         while True:
             try:
@@ -188,34 +172,39 @@ class ScraperOrchestrator:
 
                 try:
                     page_data = await client.get_page_data_by_id(page_id)
-                    if not page_data: raise PageProcessingError("API did not return page data.")
+                    if not page_data:
+                        raise PageProcessingError("API did not return page data.")
                     
                     page_html = await client.get_rendered_html(page_id)
-                    if not page_html: raise PageProcessingError("API did not return rendered HTML.")
+                    if not page_html:
+                        raise PageProcessingError("API did not return rendered HTML.")
 
                     soup = BeautifulSoup(page_html, "lxml")
                     wikitext = page_data.get("revisions", [{}])[0].get("content", "")
                     wikicode = mwparserfromhell.parse(wikitext)
                     
                     classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
-                    page_type, reason = classifier.classify()
+                    page_type = classifier.classify()
 
                     if self.tree_logger:
-                        self.tree_logger.add_node(author_cat, parent_title, page_title, page_type, reason)
+                        self.tree_logger.add_node(author_cat, parent_title, page_title, page_type)
 
                     if page_type == PageType.POEM:
                         try:
                             poem_data = self.processor.process(page_data, soup, self.config.lang, wikicode)
                             await loop.run_in_executor(None, functools.partial(writer_queue.put, poem_data))
                         except PoemParsingError as e:
-                            logger.warning(f"Page '{page_title}' failed parsing as POEM: {e}")
+                            logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
                             self.skipped_counter += 1
                     
                     else:
-                        logger.debug(f"Page '{page_title}' is a {page_type.name}. Exploring for sub-pages.")
+                        logger.info(f"'{page_title}' is a {page_type.name}. Exploring for sub-pages.")
                         sub_titles = classifier.extract_sub_page_titles()
                         if sub_titles:
+                            logger.info(f"Found {len(sub_titles)} sub-pages in '{page_title}'. Enqueuing.")
                             await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
+                        else:
+                            logger.info(f"No sub-pages found in '{page_title}'.")
                         self.skipped_counter += 1
 
                 except Exception as e:
@@ -228,11 +217,13 @@ class ScraperOrchestrator:
             except asyncio.CancelledError:
                 break
 
+
     async def _enqueue_new_titles(
         self, client: WikiAPIClient, queue: asyncio.Queue, titles: list[str], pbar: tqdm,
         current_parent_title: str, author_cat: str
     ):
-        logger.debug(f"Resolving {len(titles)} titles from '{current_parent_title}'.")
+        """Met en file de nouveaux titres à traiter après les avoir résolus via l'API."""
+        logger.debug(f"Resolving {len(titles)} titles found in '{current_parent_title}'.")
         for i in range(0, len(titles), 50):
             batch = titles[i : i + 50]
             query_result = await client.get_page_info_and_redirects(batch)
@@ -245,10 +236,8 @@ class ScraperOrchestrator:
                 
                 page_id = p_info.get("pageid")
                 if page_id and page_id not in self.processed_ids:
-                    if pbar.total is None: pbar.total = 0
                     pbar.total += 1
                     pbar.refresh()
-                    
                     await queue.put({
                         'page_info': p_info,
                         'parent_title': current_parent_title,

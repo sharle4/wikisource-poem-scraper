@@ -65,23 +65,26 @@ class ScraperOrchestrator:
         writer_thread.start()
 
         async with WikiAPIClient(self.api_endpoint, self.config.workers) as client:
-            producer_task = asyncio.create_task(self._producer(client, page_queue))
+            pbar = tqdm(desc="Processing pages", unit=" page", dynamic_ncols=True, position=0)
+            
+            producer_task = asyncio.create_task(self._producer(client, page_queue, pbar))
 
-            with tqdm(desc="Processing pages", unit=" page", dynamic_ncols=True) as pbar:
-                consumer_tasks = [
-                    asyncio.create_task(self._consumer(client, page_queue, writer_sync_queue, pbar))
-                    for _ in range(self.config.workers)
-                ]
-                
-                await producer_task
-                await page_queue.join()
+            consumer_tasks = [
+                asyncio.create_task(self._consumer(client, page_queue, writer_sync_queue, pbar))
+                for _ in range(self.config.workers)
+            ]
+            
+            await producer_task
+            await page_queue.join()
 
-                for task in consumer_tasks:
-                    task.cancel()
-                await asyncio.gather(*consumer_tasks, return_exceptions=True)
-                
-                writer_sync_queue.put(None)
-                writer_thread.join()
+            for task in consumer_tasks:
+                task.cancel()
+            await asyncio.gather(*consumer_tasks, return_exceptions=True)
+            
+            pbar.close()
+            
+            writer_sync_queue.put(None)
+            writer_thread.join()
         
         if self.tree_logger:
             self.tree_logger.write_log_files()
@@ -89,11 +92,10 @@ class ScraperOrchestrator:
         await self.db_manager.close()
         logger.info("Scraping finished.")
         logger.info(f"Total poems processed and saved: {self.processed_counter}")
-        logger.info(
-            f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}"
-        )
+        logger.info(f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}")
 
-    async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue):
+
+    async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue, pbar: tqdm):
         """Trouve et met en file les pages initiales des catégories d'auteurs."""
         logger.info(f"Normalizing root category title '{self.config.category}'...")
         cat_prefix = get_localized_category_prefix(self.config.lang)
@@ -130,22 +132,24 @@ class ScraperOrchestrator:
         logger.info(f"Found {len(non_empty_author_cats)} non-empty author categories. Discovering pages...")
         
         enqueued_count = 0
-        if non_empty_author_cats:
-            with tqdm(total=len(non_empty_author_cats), desc="Discovering pages", unit=" author_cat") as pbar:
-                for author_cat in non_empty_author_cats:
-                    author_cat_full_title = f"{cat_prefix}:{author_cat}"
-                    async for page in client.get_pages_in_category_generator(author_cat, self.config.lang):
-                        if self.config.limit and enqueued_count >= self.config.limit: break
-                        if page['pageid'] not in self.processed_ids:
-                            await queue.put({
-                                'page_info': page,
-                                'parent_title': author_cat_full_title,
-                                'author_cat': author_cat_full_title
-                            })
-                            enqueued_count += 1
-                    pbar.update(1)
-                    if self.config.limit and enqueued_count >= self.config.limit: break
+        author_pbar = tqdm(total=len(non_empty_author_cats), desc="Discovering pages", unit=" author_cat", position=1)
+        for author_cat in non_empty_author_cats:
+            author_cat_full_title = f"{cat_prefix}:{author_cat}"
+            async for page in client.get_pages_in_category_generator(author_cat, self.config.lang):
+                if self.config.limit and enqueued_count >= self.config.limit: break
+                if page['pageid'] not in self.processed_ids:
+                    await queue.put({
+                        'page_info': page,
+                        'parent_title': author_cat_full_title,
+                        'author_cat': author_cat_full_title
+                    })
+                    enqueued_count += 1
+            author_pbar.update(1)
+            if self.config.limit and enqueued_count >= self.config.limit: break
+        author_pbar.close()
         
+        pbar.total = enqueued_count
+        pbar.refresh()
         logger.info(f"Producer finished. Enqueued {enqueued_count} initial pages for processing.")
 
     async def _consumer(
@@ -168,6 +172,7 @@ class ScraperOrchestrator:
 
                 if page_id in self.processed_ids:
                     page_queue.task_done()
+                    pbar.update(1)
                     continue
 
                 try:
@@ -224,6 +229,8 @@ class ScraperOrchestrator:
         current_parent_title: str, author_cat: str
     ):
         logger.debug(f"Resolving {len(titles)} titles from '{current_parent_title}'.")
+        pbar.total += len(titles)
+        pbar.refresh()
         for i in range(0, len(titles), 50):
             batch = titles[i : i + 50]
             query_result = await client.get_page_info_and_redirects(batch)

@@ -1,7 +1,7 @@
 import logging
 import re
 from enum import Enum, auto
-from typing import List, Set
+from typing import Set
 from urllib.parse import unquote
 
 import mwparserfromhell
@@ -32,9 +32,7 @@ def get_localized_prefix(lang: str, prefix_type: str) -> str:
 
 
 class PageClassifier:
-    """
-    Analyse les données d'une page pour la classifier avec une logique experte.
-    """
+    """Analyse les données d'une page pour la classifier avec une logique experte."""
 
     def __init__(
         self,
@@ -54,29 +52,26 @@ class PageClassifier:
         }
 
     def _get_page_signals(self) -> dict:
-        """Analyse la page une seule fois pour extraire des signaux booléens."""
+        """Analyse la page une seule fois pour extraire des signaux booléens forts."""
         is_recueil_cat = "Recueils de poèmes" in self.categories
         is_multiversion_cat = "Éditions multiples" in self.categories
 
-        has_donnees_structurees = bool(
-            self.soup.find("a", title=re.compile(r"^d:Q\d+$"))
-        )
-        has_editions_header = bool(
-            self.soup.find(["h2", "h3"], string=re.compile(r"Éditions", re.I))
-        )
+        has_wikidata_link = bool(self.soup.find("a", title=re.compile(r"^d:Q\d+$")))
+        has_editions_header = bool(self.soup.find(["h2", "h3"], string=re.compile(r"Éditions", re.I)))
 
         has_ws_summary = bool(self.soup.select_one("div.ws-summary"))
-        has_toc = bool(self.soup.find("div", id="toc"))
         has_poem_structure = PoemParser.extract_poem_structure(self.soup) is not None
-
+        
+        has_toc = bool(self.soup.find("div", id="toc"))
+        
         return {
             "is_recueil_cat": is_recueil_cat,
             "is_multiversion_cat": is_multiversion_cat,
-            "has_donnees_structurees": has_donnees_structurees,
+            "has_wikidata_link": has_wikidata_link,
             "has_editions_header": has_editions_header,
             "has_ws_summary": has_ws_summary,
-            "has_toc": has_toc,
             "has_poem_structure": has_poem_structure,
+            "has_toc": has_toc,
         }
 
     def classify(self) -> PageType:
@@ -88,25 +83,22 @@ class PageClassifier:
 
         if signals["is_recueil_cat"]:
             return PageType.POETIC_COLLECTION
-        if signals["is_multiversion_cat"]:
-            return PageType.MULTI_VERSION_HUB
 
-        if signals["has_ws_summary"] or signals["has_toc"] or signals["has_editions_header"]:
-            if signals["has_donnees_structurees"]:
+        if signals["has_ws_summary"] or signals["has_editions_header"] or signals["has_toc"]:
+            if signals["is_multiversion_cat"] or signals["has_wikidata_link"]:
                 return PageType.MULTI_VERSION_HUB
             return PageType.POETIC_COLLECTION
 
+        if signals["has_wikidata_link"] and self.soup.select("ul > li > a"):
+             return PageType.MULTI_VERSION_HUB
+        
         if signals["has_poem_structure"]:
             return PageType.POEM
-
-        if signals["has_donnees_structurees"] and self.soup.select("ul > li"):
-            return PageType.MULTI_VERSION_HUB
             
         return PageType.OTHER
 
     def extract_sub_page_titles(self) -> Set[str]:
         """Extrait les titres des pages liées avec une logique de sélection prioritaire."""
-        
         summary_div = self.soup.select_one("div.ws-summary")
         if summary_div:
             return self._extract_links_from_element(summary_div)
@@ -131,13 +123,11 @@ class PageClassifier:
         
         for link in element.find_all("a", href=True):
             href = link.get("href", "")
-            if not href.startswith("/wiki/"):
-                continue
+            if not href.startswith("/wiki/"): continue
 
             if any(
-                href.startswith(f"/wiki/{prefix}:")
-                for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial"]
-            ) or "action=edit" in href:
+                prefix in href for prefix in [f":{author_prefix}:", f":{category_prefix}:", "Portail:", "Aide:", "Wikisource:", "Fichier:", "Spécial:"]
+            ) or "action=edit" in href or "redlink=1" in href:
                 continue
 
             try:

@@ -20,9 +20,9 @@ from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
 from .schemas import PoemSchema
 from .classifier import PageClassifier, PageType
+from .tree_logger import HierarchicalLogger
 
 logger = logging.getLogger(__name__)
-
 
 class ScraperOrchestrator:
     """Orchestre le workflow de scraping intelligent et hiérarchique."""
@@ -38,6 +38,12 @@ class ScraperOrchestrator:
         self.db_manager = DatabaseManager(self.db_path)
         self.processor = PoemProcessor()
 
+        self.tree_logger = None
+        if self.config.tree_log:
+            log_dir = self.config.output_dir / "logs"
+            self.tree_logger = HierarchicalLogger(log_dir)
+            logger.info(f"Hierarchical logging enabled. Logs will be saved to {log_dir}")
+        
         self.processed_ids: Set[int] = set()
         self.processed_counter = 0
         self.skipped_counter = 0
@@ -88,6 +94,9 @@ class ScraperOrchestrator:
                 writer_sync_queue.put(None)
                 writer_thread.join()
 
+        if self.tree_logger:
+            self.tree_logger.write_log_files()
+        
         await self.db_manager.close()
         logger.info("Scraping finished.")
         logger.info(f"Total poems processed and saved: {self.processed_counter}")
@@ -177,13 +186,18 @@ class ScraperOrchestrator:
                 unit=" author_cat",
             ) as pbar:
                 for author_cat in non_empty_author_cats:
+                    author_cat_full_title = f"{cat_prefix}:{author_cat}"
                     async for page in client.get_pages_in_category_generator(
                         author_cat, self.config.lang
                     ):
                         if self.config.limit and enqueued_count >= self.config.limit:
                             break
                         if page["pageid"] not in self.processed_ids:
-                            await queue.put(page)
+                            await queue.put({
+                                'page_info': page,
+                                'parent_title': author_cat_full_title,
+                                'author_cat': author_cat_full_title
+                            })
                             enqueued_count += 1
                     pbar.update(1)
                     if self.config.limit and enqueued_count >= self.config.limit:
@@ -209,12 +223,18 @@ class ScraperOrchestrator:
         """
         loop = asyncio.get_running_loop()
         while True:
-            page_info = await page_queue.get()
-            if page_info is None:
+            queue_item = await page_queue.get()
+            if queue_item is None:
                 page_queue.task_done()
                 break
 
+            page_info = queue_item['page_info']
+            parent_title = queue_item['parent_title']
+            author_cat = queue_item['author_cat']
+
             page_id = page_info["pageid"]
+            page_title = page_info.get('title', 'N/A')
+            
             if page_id in self.processed_ids:
                 logger.debug(f"Skipping page ID {page_id} already processed.")
                 pbar.update(1)
@@ -244,6 +264,9 @@ class ScraperOrchestrator:
                 )
                 page_type = classifier.classify()
 
+                if self.tree_logger:
+                    self.tree_logger.add_node(author_cat, parent_title, page_title, page_type)
+                
                 if page_type == PageType.POEM:
                     try:
                         poem_data = self.processor.process(
@@ -266,7 +289,7 @@ class ScraperOrchestrator:
                     sub_titles = classifier.extract_sub_page_titles()
                     if sub_titles:
                         await self._enqueue_new_titles(
-                            client, page_queue, list(sub_titles), pbar
+                            client, page_queue, list(sub_titles), pbar, page_title, author_cat
                         )
                     self.processed_ids.add(page_id)
                     self.skipped_counter += 1
@@ -289,10 +312,11 @@ class ScraperOrchestrator:
                 page_queue.task_done()
 
     async def _enqueue_new_titles(
-        self, client: WikiAPIClient, queue: asyncio.Queue, titles: list[str], pbar: tqdm
+        self, client: WikiAPIClient, queue: asyncio.Queue, titles: list[str], pbar: tqdm,
+        current_collection_title: str, author_cat: str
     ):
         """Résout une liste de titres en informations de page et les ajoute à la file."""
-        logger.debug(f"Resolving {len(titles)} titles discovered from a collection.")
+        logger.debug(f"Resolving {len(titles)} titles discovered from '{current_collection_title}'.")
         for i in range(0, len(titles), 50):
             batch = titles[i : i + 50]
             query_result = await client.get_page_info_and_redirects(batch)
@@ -309,15 +333,17 @@ class ScraperOrchestrator:
 
             for p_info in query_result.get("pages", []):
                 if p_info.get("missing"): continue
-                
-                final_title = redirects.get(p_info.get("title", "").lower(), p_info.get("title", ""))
-                final_page_info = pages_by_norm_title.get(final_title.lower(), p_info)
-
-                page_id = final_page_info.get("pageid")
+                page_id = p_info.get("pageid")
                 if page_id and page_id not in self.processed_ids:
                     pbar.total += 1
                     pbar.refresh()
-                    await queue.put(final_page_info)
+                    await queue.put(
+                        {
+                            'page_info': p_info,
+                            'parent_title': current_collection_title,
+                            'author_cat': author_cat
+                        }
+                    )
 
 
     def _sync_writer(self, writer_queue: queue.Queue):

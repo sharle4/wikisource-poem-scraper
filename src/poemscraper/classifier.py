@@ -1,7 +1,7 @@
 import logging
 import re
 from enum import Enum, auto
-from typing import Set
+from typing import Set, Tuple
 from urllib.parse import unquote
 
 import mwparserfromhell
@@ -86,34 +86,42 @@ class PageClassifier:
             "has_titre_template_with_parts": has_titre_template_with_parts,
         }
 
-    def classify(self) -> PageType:
+    def classify(self) -> Tuple[PageType, str]:
         """
-        Détermine le type de page en appliquant une logique de priorisation stricte
-        et en utilisant les nouveaux signaux du wikitext.
+        Détermine le type de page et la raison de la classification en appliquant une
+        logique de priorisation stricte.
         """
         if self.ns != 0:
             if self.title.startswith(get_localized_prefix(self.lang, "author") + ":"):
-                return PageType.AUTHOR
-            return PageType.OTHER
-        
-        signals = self._get_page_signals()
-        
-        if signals["is_multiversion_cat"] or signals["has_editions_template"]:
-            return PageType.MULTI_VERSION_HUB
+                return PageType.AUTHOR, "title_is_author_prefix"
+            return PageType.OTHER, f"namespace_{self.ns}"
 
-        if signals["is_recueil_cat"] or signals["has_ws_summary"] or signals["has_toc"] or signals["has_titre_template_with_parts"]:
-            return PageType.POETIC_COLLECTION
+        signals = self._get_page_signals()
+
+        if signals["is_multiversion_cat"]:
+            return PageType.MULTI_VERSION_HUB, "is_multiversion_cat"
+        if signals["has_editions_template"]:
+            return PageType.MULTI_VERSION_HUB, "has_editions_template"
+
+        if signals["is_recueil_cat"]:
+            return PageType.POETIC_COLLECTION, "is_recueil_cat"
+        if signals["has_ws_summary"]:
+            return PageType.POETIC_COLLECTION, "has_ws_summary"
+        if signals["has_toc"]:
+            return PageType.POETIC_COLLECTION, "has_toc"
+        if signals["has_titre_template_with_parts"]:
+            return PageType.POETIC_COLLECTION, "has_titre_template_with_parts"
 
         if signals["has_editions_header"]:
-            return PageType.MULTI_VERSION_HUB
+            return PageType.MULTI_VERSION_HUB, "has_editions_header"
 
         if signals["has_poem_structure"]:
-            return PageType.POEM
+            return PageType.POEM, "has_poem_structure"
 
         if signals["has_donnees_structurees"] and self.soup.select("ul > li > a"):
-            return PageType.MULTI_VERSION_HUB
-            
-        return PageType.OTHER
+            return PageType.MULTI_VERSION_HUB, "has_donnees_structurees_with_links"
+
+        return PageType.OTHER, "no_signals_matched"
 
     def extract_sub_page_titles(self) -> Set[str]:
         """

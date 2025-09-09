@@ -39,9 +39,9 @@ class HierarchicalLogger:
         return None
 
     def add_node(
-        self, author_cat: str, parent_title: str, page_title: str, page_type: PageType
+        self, author_cat: str, parent_title: str, page_title: str, page_type: PageType, reason: str
     ):
-        """Ajoute une page (nœud) à l'arborescence de son auteur."""
+        """Ajoute une page (nœud) à l'arborescence de son auteur avec la raison de sa classification."""
         with self._lock:
             author_tree = self.trees.setdefault(
                 author_cat, {"name": author_cat, "children": {}}
@@ -56,6 +56,7 @@ class HierarchicalLogger:
                 parent_node["children"][page_title] = {
                     "name": page_title,
                     "type": page_type.name,
+                    "reason": reason,
                     "children": {},
                 }
 
@@ -64,10 +65,11 @@ class HierarchicalLogger:
     ):
         """Écrit récursivement l'arborescence dans un fichier avec les bons préfixes."""
         connector = "└── " if is_last else "├── "
-        file.write(f"{prefix}{connector}{node['name']} [{node['type']}]\n")
+        file.write(f"{prefix}{connector}{node['name']} [{node['type']} ({node['reason']})]\n")
 
         child_prefix = "    " if is_last else "│   "
         children = list(node.get("children", {}).values())
+        children.sort(key=lambda x: x['name'])
         for i, child in enumerate(children):
             self._write_tree_recursive(
                 file, child, prefix + child_prefix, i == len(children) - 1
@@ -76,13 +78,16 @@ class HierarchicalLogger:
     def write_log_files(self):
         """Écrit tous les arbres construits dans leurs fichiers respectifs."""
         logger.info(f"Writing {len(self.trees)} exploration tree logs...")
-        for author_cat, tree in self.trees.items():
+        sorted_trees = sorted(self.trees.items())
+
+        for author_cat, tree in sorted_trees:
             filename = _sanitize_filename(author_cat.split(":")[-1])
             filepath = self.log_dir / filename
             try:
                 with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(f"{author_cat}\n")
+                    f.write(f"Arbre d'exploration pour: {author_cat}\n")
                     children = list(tree.get("children", {}).values())
+                    children.sort(key=lambda x: x['name'])
                     for i, child in enumerate(children):
                         self._write_tree_recursive(
                             f, child, "", i == len(children) - 1

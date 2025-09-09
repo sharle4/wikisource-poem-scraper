@@ -51,28 +51,33 @@ class PageClassifier:
         self.title = page_data.get("title", "")
         self.ns = page_data.get("ns", -1)
 
-    def _is_poem_page(self) -> bool:
-        """Détermine si la page contient un poème en recherchant des structures HTML spécifiques."""
+    def _has_poem_structure(self) -> bool:
+        """Détermine si la page contient une structure de poème HTML identifiable."""
         structure = PoemParser.extract_poem_structure(self.soup)
         return structure is not None and len(structure.stanzas) > 0
 
-    def _is_collection_page(self) -> bool:
-        """Détermine si une page est un recueil (table des matières, liste de liens)."""
+    def _is_explicit_collection(self) -> bool:
+        """
+        Détermine si une page est un recueil de manière très probable.
+        Signal fort : présence d'une table des matières (TDM/TOC).
+        Signal moyen : présence d'une liste à puces avec de nombreux liens.
+        """
         if self.soup.find("div", id="toc"):
             return True
+        
+        list_items = self.soup.select("ul > li")
+        if len(list_items) > 5:
+            links_in_list = sum(1 for li in list_items if li.find("a", href=True))
+            if links_in_list / len(list_items) > 0.7:
+                 return True
 
-        list_links = self.soup.select("li a[href^='/wiki/']")
-        if len(list_links) > 5:
-            disambiguation_templates = {"homonymie", "disambig", "homonymes"}
-            is_disambiguation = any(
-                t.name.strip().lower() in disambiguation_templates
-                for t in self.wikicode.filter_templates()
-            )
-            return not is_disambiguation
         return False
 
     def classify(self) -> PageType:
-        """Détermine le type de page en appliquant une série d'heuristiques ordonnées."""
+        """
+        Détermine le type de page en appliquant une série d'heuristiques ordonnées
+        pour une précision maximale.
+        """
         if self.ns != 0:
             if self.title.startswith(get_localized_prefix(self.lang, "author") + ":"):
                 return PageType.AUTHOR
@@ -84,11 +89,14 @@ class PageClassifier:
             for t in self.wikicode.filter_templates()
         ):
             return PageType.DISAMBIGUATION
-        
-        if self._is_collection_page():
-            return PageType.COLLECTION
 
-        if self._is_poem_page():
+        has_poem = self._has_poem_structure()
+        is_collection = self._is_explicit_collection()
+
+        if is_collection:
+            return PageType.COLLECTION
+        
+        if has_poem:
             return PageType.POEM
 
         return PageType.OTHER
@@ -109,12 +117,8 @@ class PageClassifier:
             if any(
                 href.startswith(f"/wiki/{prefix}:")
                 for prefix in [
-                    category_prefix,
-                    author_prefix,
-                    "Portail",
-                    "Aide",
-                    "Wikisource",
-                    "Fichier",
+                    category_prefix, author_prefix, "Portail", "Aide",
+                    "Wikisource", "Fichier",
                 ]
             ):
                 continue

@@ -33,11 +33,17 @@ class PoemProcessor:
                 "Aucune structure de poème trouvée dans le HTML ou contenu vide."
             )
 
-        html_metadata = self._extract_html_metadata(soup)
-        wikitext_metadata = self._extract_wikitext_metadata(wikicode)
+        html_meta = self._extract_html_metadata(soup)
+        wikitext_meta = self._extract_wikitext_metadata(wikicode)
+        
+        final_meta_dict = {**wikitext_meta, **html_meta}
 
-        final_meta_dict = wikitext_metadata
-        final_meta_dict.update(html_metadata)
+        if not final_meta_dict.get("author"):
+            if "/" in page_data["title"]:
+                parent_title = page_data["title"].split("/")[0].strip()
+                if len(parent_title) < 50: 
+                    final_meta_dict["source_collection"] = parent_title
+
 
         metadata_obj = PoemMetadata(**final_meta_dict)
         normalized_text = PoemParser.create_normalized_text(structure)
@@ -93,8 +99,11 @@ class PoemProcessor:
             if name in ["auteur", "author"] and template.has(1):
                 metadata.setdefault("author", template.get(1).value.strip())
 
-            if name == "titre" and template.has("auteur"):
-                metadata.setdefault("author", template.get("auteur").value.strip())
+            if name == "titre":
+                if template.has("auteur"):
+                     metadata.setdefault("author", template.get("auteur").value.strip())
+                if template.has("recueil"):
+                     metadata.setdefault("source_collection", template.get("recueil").value.strip())
 
             if name == "infoédit":
                 if template.has("AUTEUR"):

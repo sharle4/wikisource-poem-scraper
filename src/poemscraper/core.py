@@ -113,8 +113,8 @@ class ScraperOrchestrator:
         logger.info(f"Phase 1: Discovering author subcategories in '{full_cat_title}'...")
         
         author_cat_titles = [
-            cat['title'].split(":", 1)[1]
-            async for cat in client.get_subcategories_generator(full_cat_title.split(":", 1)[1], self.config.lang)
+            cat['title']
+            async for cat in client.get_subcategories_generator(full_cat_title, self.config.lang)
         ]
         logger.info(f"Found {len(author_cat_titles)} potential author categories. Checking which are non-empty...")
 
@@ -122,25 +122,24 @@ class ScraperOrchestrator:
         if author_cat_titles:
             for i in range(0, len(author_cat_titles), 50):
                 batch_titles = author_cat_titles[i:i + 50]
-                info = await client.get_category_info(batch_titles, self.config.lang)
+                info = await client.get_category_info(batch_titles)
                 for title, cat_info in info.items():
                     if cat_info.get('pages', 0) > 0 or cat_info.get('subcats', 0) > 0:
-                        non_empty_author_cats.append(title.split(":", 1)[1])
+                        non_empty_author_cats.append(title)
 
         logger.info(f"Found {len(non_empty_author_cats)} non-empty author categories. Discovering pages...")
         
         enqueued_count = 0
         if non_empty_author_cats:
             with tqdm(total=len(non_empty_author_cats), desc="Discovering pages", unit=" author_cat") as pbar:
-                for author_cat in non_empty_author_cats:
-                    author_cat_full_title = f"{cat_prefix}:{author_cat}"
-                    async for page in client.get_pages_in_category_generator(author_cat, self.config.lang):
+                for author_cat_full_title in non_empty_author_cats:
+                    async for page in client.get_pages_in_category_generator(author_cat_full_title, self.config.lang):
                         if self.config.limit and enqueued_count >= self.config.limit: break
                         if page['pageid'] not in self.processed_ids:
                             await queue.put({
                                 'page_info': page,
                                 'parent_title': author_cat_full_title,
-                                'author_cat': author_cat_full_title
+                                'author_cat': author_cat_full_title 
                             })
                             enqueued_count += 1
                     pbar.update(1)
@@ -155,6 +154,7 @@ class ScraperOrchestrator:
         writer_queue: queue.Queue,
         pbar: tqdm,
     ):
+        """Consomme les pages, les traite et envoie les poèmes valides à la file d'attente d'écriture."""
         loop = asyncio.get_running_loop()
         while True:
             try:
@@ -197,15 +197,14 @@ class ScraperOrchestrator:
                             logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
                             self.skipped_counter += 1
                     
-                    elif page_type in [PageType.POETIC_COLLECTION, PageType.MULTI_VERSION_HUB]:
-                        logger.info(f"Page '{page_title}' is a {page_type.name}. Extracting and enqueuing sub-pages.")
+                    else:
+                        logger.info(f"'{page_title}' is a {page_type.name}. Exploring for sub-pages.")
                         sub_titles = classifier.extract_sub_page_titles()
                         if sub_titles:
+                            logger.info(f"Found {len(sub_titles)} sub-pages in '{page_title}'. Enqueuing.")
                             await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
-                        self.skipped_counter += 1
-                    
-                    else:
-                        logger.debug(f"Skipping page '{page_title}' classified as {page_type.name}.")
+                        else:
+                            logger.info(f"No sub-pages found in '{page_title}'.")
                         self.skipped_counter += 1
 
                 except Exception as e:
@@ -223,7 +222,8 @@ class ScraperOrchestrator:
         self, client: WikiAPIClient, queue: asyncio.Queue, titles: list[str], pbar: tqdm,
         current_parent_title: str, author_cat: str
     ):
-        logger.debug(f"Resolving {len(titles)} titles from '{current_parent_title}'.")
+        """Met en file de nouveaux titres à traiter après les avoir résolus via l'API."""
+        logger.debug(f"Resolving {len(titles)} titles found in '{current_parent_title}'.")
         for i in range(0, len(titles), 50):
             batch = titles[i : i + 50]
             query_result = await client.get_page_info_and_redirects(batch)

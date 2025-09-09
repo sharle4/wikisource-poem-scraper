@@ -66,6 +66,12 @@ def main_cli():
         help="Enable verbose (DEBUG) logging."
     )
     
+    parser.add_argument(
+        "--tree-log",
+        action="store_true",
+        help="Generate detailed exploration tree logs for each author in the output 'logs' directory."
+    )
+    
     args = parser.parse_args()
     
     log_level = logging.DEBUG if args.verbose else logging.INFO

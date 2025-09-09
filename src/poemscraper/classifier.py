@@ -1,7 +1,7 @@
 import logging
 import re
 from enum import Enum, auto
-from typing import Set, Tuple
+from typing import List, Set
 from urllib.parse import unquote
 
 import mwparserfromhell
@@ -32,7 +32,9 @@ def get_localized_prefix(lang: str, prefix_type: str) -> str:
 
 
 class PageClassifier:
-    """Analyse les données d'une page pour la classifier avec une logique experte."""
+    """
+    Analyse les données d'une page pour la classifier avec une logique experte.
+    """
 
     def __init__(
         self,
@@ -50,101 +52,94 @@ class PageClassifier:
         self.categories = {
             c["title"].split(":")[-1] for c in page_data.get("categories", [])
         }
-        self._sub_page_titles_cache: Set[str] | None = None
 
     def _get_page_signals(self) -> dict:
-        """Analyse la page une seule fois pour extraire des signaux forts."""
-        sub_page_titles = self.extract_sub_page_titles()
-        num_sub_pages = len(sub_page_titles)
+        """Analyse la page une seule fois pour extraire des signaux booléens."""
+        is_recueil_cat = "Recueils de poèmes" in self.categories
+        is_multiversion_cat = "Éditions multiples" in self.categories
+
+        has_donnees_structurees = bool(
+            self.soup.find("a", title=re.compile(r"^d:Q\d+$"))
+        )
+        has_editions_header = bool(
+            self.soup.find(["h2", "h3"], string=re.compile(r"Éditions", re.I))
+        )
+
+        has_ws_summary = bool(self.soup.select_one("div.ws-summary"))
+        has_toc = bool(self.soup.find("div", id="toc"))
+        has_poem_structure = PoemParser.extract_poem_structure(self.soup) is not None
 
         return {
-            "is_recueil_cat": "Recueils de poèmes" in self.categories,
-            "is_multiversion_cat": "Éditions multiples" in self.categories,
-            "has_wikidata_link": bool(
-                self.soup.find("a", title=re.compile(r"^d:Q\d+$"))
-            ),
-            "has_editions_header": bool(
-                self.soup.find(["h2", "h3"], string=re.compile(r"Éditions", re.I))
-            ),
-            "has_ws_summary": bool(self.soup.select_one("div.ws-summary")),
-            "has_poem_structure": PoemParser.extract_poem_structure(self.soup)
-            is not None,
-            "has_toc": bool(self.soup.find("div", id="toc")),
-            "has_many_sub_links": num_sub_pages > 3,
-            "sub_page_titles": sub_page_titles,
+            "is_recueil_cat": is_recueil_cat,
+            "is_multiversion_cat": is_multiversion_cat,
+            "has_donnees_structurees": has_donnees_structurees,
+            "has_editions_header": has_editions_header,
+            "has_ws_summary": has_ws_summary,
+            "has_toc": has_toc,
+            "has_poem_structure": has_poem_structure,
         }
 
-    def classify(self) -> Tuple[PageType, str]:
-        """Détermine le type de page et la raison de la classification."""
+    def classify(self) -> PageType:
+        """Détermine le type de page en appliquant une logique de priorisation stricte."""
         if self.ns != 0:
-            if self.title.startswith(get_localized_prefix(self.lang, "author") + ":"):
-                return (PageType.AUTHOR, "author_namespace")
-            return (PageType.OTHER, f"namespace_{self.ns}")
-
+            return PageType.AUTHOR if self.title.startswith(get_localized_prefix(self.lang, "author") + ":") else PageType.OTHER
+        
         signals = self._get_page_signals()
 
-        if signals["has_poem_structure"] and not signals["has_many_sub_links"]:
-            return (PageType.POEM, "has_poem_structure")
+        if signals["is_recueil_cat"]:
+            return PageType.POETIC_COLLECTION
+        if signals["is_multiversion_cat"]:
+            return PageType.MULTI_VERSION_HUB
 
-        collection_signals = {
-            "is_recueil_cat": signals["is_recueil_cat"],
-            "has_ws_summary": signals["has_ws_summary"],
-            "has_editions_header": signals["has_editions_header"],
-            "has_toc": signals["has_toc"],
-            "has_many_sub_links": signals["has_many_sub_links"],
-        }
-        true_collection_signal = next(
-            (k for k, v in collection_signals.items() if v), None
-        )
-
-        if true_collection_signal:
-            if signals["is_multiversion_cat"]:
-                return (PageType.MULTI_VERSION_HUB, "is_multiversion_cat")
-            if signals["has_wikidata_link"]:
-                return (PageType.MULTI_VERSION_HUB, "has_wikidata_link")
-            return (PageType.POETIC_COLLECTION, true_collection_signal)
+        if signals["has_ws_summary"] or signals["has_toc"] or signals["has_editions_header"]:
+            if signals["has_donnees_structurees"]:
+                return PageType.MULTI_VERSION_HUB
+            return PageType.POETIC_COLLECTION
 
         if signals["has_poem_structure"]:
-            return (PageType.POEM, "has_poem_structure_fallback")
+            return PageType.POEM
 
-        return (PageType.OTHER, "no_strong_signals")
+        if signals["has_donnees_structurees"] and self.soup.select("ul > li"):
+            return PageType.MULTI_VERSION_HUB
+            
+        return PageType.OTHER
 
     def extract_sub_page_titles(self) -> Set[str]:
-        """Extrait les titres des pages liées avec une logique de sélection robuste."""
-        if self._sub_page_titles_cache is not None:
-            return self._sub_page_titles_cache
+        """Extrait les titres des pages liées avec une logique de sélection prioritaire."""
+        
+        summary_div = self.soup.select_one("div.ws-summary")
+        if summary_div:
+            return self._extract_links_from_element(summary_div)
 
-        content_area = self.soup.select_one("#mw-content-text .mw-parser-output")
-        if not content_area:
-            self._sub_page_titles_cache = set()
-            return self._sub_page_titles_cache
+        editions_header = self.soup.find(["h2", "h3"], string=re.compile(r"Éditions", re.I))
+        if editions_header:
+            next_element = editions_header.find_next_sibling()
+            if next_element and next_element.name == 'ul':
+                return self._extract_links_from_element(next_element)
+        
+        content_area = self.soup.select_one("#mw-content-text")
+        if content_area:
+            return self._extract_links_from_element(content_area)
+            
+        return set()
 
-        links = content_area.select("ul a, ol a")
-        if not links:
-            links = content_area.find_all("a", href=True)
-
-        self._sub_page_titles_cache = self._filter_and_extract_titles_from_links(links)
-        return self._sub_page_titles_cache
-
-    def _filter_and_extract_titles_from_links(self, links: list[Tag]) -> Set[str]:
-        """Factorisation de l'extraction et du filtrage de liens."""
+    def _extract_links_from_element(self, element: Tag) -> Set[str]:
+        """Factorisation de l'extraction de liens depuis un élément BeautifulSoup."""
         titles: Set[str] = set()
-        ignored_prefixes = (
-            f":{get_localized_prefix(self.lang, 'author')}:",
-            f":{get_localized_prefix(self.lang, 'category')}:",
-            "Portail:", "Aide:", "Wikisource:", "Fichier:", "Spécial:", "Catégorie:",
-        )
-
-        for link in links:
+        author_prefix = get_localized_prefix(self.lang, "author")
+        category_prefix = get_localized_prefix(self.lang, "category")
+        
+        for link in element.find_all("a", href=True):
             href = link.get("href", "")
-            if (
-                not href.startswith("/wiki/")
-                or "action=edit" in href
-                or "redlink=1" in href
-                or (link.get("class") and "new" in link.get("class"))
-                or href.startswith(ignored_prefixes)
-            ):
+            if not href.startswith("/wiki/"):
                 continue
+
+            if any(
+                href.startswith(f"/wiki/{prefix}:")
+                for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial"]
+            ) or "action=edit" in href:
+                continue
+
             try:
                 raw_title = href.split("/")[-1].split("#")[0]
                 title = unquote(raw_title).replace("_", " ")
@@ -152,6 +147,4 @@ class PageClassifier:
                     titles.add(title)
             except Exception as e:
                 logger.warning(f"Impossible d'extraire le titre de l'URL '{href}': {e}")
-
-        logger.debug(f"Extracted {len(titles)} sub-page titles from '{self.title}'.")
         return titles

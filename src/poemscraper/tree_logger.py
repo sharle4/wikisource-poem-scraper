@@ -39,32 +39,23 @@ class HierarchicalLogger:
         return None
 
     def add_node(
-        self,
-        author_cat: str,
-        parent_title: str,
-        page_title: str,
-        page_type: PageType,
-        reason: str,
+        self, author_cat: str, parent_title: str, page_title: str, page_type: PageType
     ):
         """Ajoute une page (nœud) à l'arborescence de son auteur."""
         with self._lock:
             author_tree = self.trees.setdefault(
-                author_cat, {"name": author_cat, "type": "AUTHOR_CAT", "children": {}}
+                author_cat, {"name": author_cat, "children": {}}
             )
 
             parent_node = self._find_node(author_tree, parent_title)
 
             if not parent_node:
-                logger.warning(
-                    f"Parent node '{parent_title}' not found for child '{page_title}'. Attaching to root."
-                )
                 parent_node = author_tree
 
-            if page_title not in parent_node.get("children", {}):
-                parent_node.setdefault("children", {})[page_title] = {
+            if page_title not in parent_node["children"]:
+                parent_node["children"][page_title] = {
                     "name": page_title,
                     "type": page_type.name,
-                    "reason": reason,
                     "children": {},
                 }
 
@@ -73,8 +64,7 @@ class HierarchicalLogger:
     ):
         """Écrit récursivement l'arborescence dans un fichier avec les bons préfixes."""
         connector = "└── " if is_last else "├── "
-        reason_str = f" ({node['reason']})" if node.get("reason") else ""
-        file.write(f"{prefix}{connector}{node['name']} [{node['type']}{reason_str}]\n")
+        file.write(f"{prefix}{connector}{node['name']} [{node['type']}]\n")
 
         child_prefix = "    " if is_last else "│   "
         children = list(node.get("children", {}).values())
@@ -91,7 +81,7 @@ class HierarchicalLogger:
             filepath = self.log_dir / filename
             try:
                 with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(f"{tree['name']} [{tree['type']}]\n")
+                    f.write(f"{author_cat}\n")
                     children = list(tree.get("children", {}).values())
                     for i, child in enumerate(children):
                         self._write_tree_recursive(

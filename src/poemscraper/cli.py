@@ -19,17 +19,24 @@ def main_cli():
     parser = argparse.ArgumentParser(
         description="A robust, asynchronous scraper for extracting structured poems from Wikisource."
     )
+    
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument(
+        "--category",
+        type=str,
+        help="The root category to start crawling from (e.g., 'Poèmes', 'Poetry')."
+    )
+    source_group.add_argument(
+        "--sub-category",
+        type=str,
+        help="A specific author sub-category to scrape (e.g., 'Poèmes de Charles Baudelaire')."
+    )
+
     parser.add_argument(
         "--lang",
         type=str,
         required=True,
         help="Language code of the Wikisource to target (e.g., 'fr', 'en', 'de')."
-    )
-    parser.add_argument(
-        "--category",
-        type=str,
-        required=True,
-        help="The root category to start crawling from (e.g., 'Poèmes', 'Poetry')."
     )
     parser.add_argument(
         "--output_dir",

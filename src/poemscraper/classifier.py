@@ -1,7 +1,7 @@
 import logging
 import re
 from enum import Enum, auto
-from typing import Set
+from typing import Set, Tuple
 from urllib.parse import unquote
 
 import mwparserfromhell
@@ -57,17 +57,14 @@ class PageClassifier:
         """Analyse la page une seule fois pour extraire des signaux booléens."""
         content_area = self.soup.select_one("#mw-content-text .mw-parser-output") or self.soup
         
-        # Category signals
         is_recueil_cat = "Recueils de poèmes" in self.categories
         is_multiversion_cat = "Éditions multiples" in self.categories
         
-        # Structure signals
         has_poem_structure = PoemParser.extract_poem_structure(self.soup) is not None
         has_ws_summary = bool(content_area.select_one("div.ws-summary"))
         has_toc = bool(content_area.select_one("div#toc"))
         has_editions_header = bool(content_area.find(["h2", "h3"], string=re.compile(r"^\s*Éditions\s*$", re.I)))
         
-        # Content signals
         links_in_lists = content_area.select('#mw-content-text li a[href^="/wiki/"], #mw-content-text .tableItem a[href^="/wiki/"]')
         has_significant_links_in_lists = len(links_in_lists) > 3
 
@@ -81,32 +78,34 @@ class PageClassifier:
             "has_significant_links_in_lists": has_significant_links_in_lists,
         }
 
-    def classify(self) -> PageType:
-        """Détermine le type de page en appliquant une logique de priorisation stricte."""
+    def classify(self) -> Tuple[PageType, str]:
+        """Détermine le type de page et la raison de la classification."""
         if self.ns != 0:
-            return PageType.AUTHOR if self.title.startswith(get_localized_prefix(self.lang, "author") + ":") else PageType.OTHER
+            reason = "is_author_page" if self.title.startswith(get_localized_prefix(self.lang, "author") + ":") else "is_other_namespace"
+            page_type = PageType.AUTHOR if reason == "is_author_page" else PageType.OTHER
+            return page_type, reason
         
         signals = self._get_page_signals()
 
         if signals["is_multiversion_cat"]:
-            return PageType.MULTI_VERSION_HUB
-        
+            return PageType.MULTI_VERSION_HUB, "is_multiversion_cat"
         if signals["is_recueil_cat"]:
-            return PageType.POETIC_COLLECTION
+            return PageType.POETIC_COLLECTION, "is_recueil_cat"
 
         if signals["has_editions_header"]:
-             return PageType.MULTI_VERSION_HUB
+             return PageType.MULTI_VERSION_HUB, "has_editions_header"
 
         if signals["has_ws_summary"] or signals["has_toc"]:
-            return PageType.POETIC_COLLECTION
+            reason = "has_ws_summary" if signals["has_ws_summary"] else "has_toc"
+            return PageType.POETIC_COLLECTION, reason
             
         if signals["has_poem_structure"]:
-            return PageType.POEM
+            return PageType.POEM, "has_poem_structure"
 
         if signals["has_significant_links_in_lists"]:
-            return PageType.POETIC_COLLECTION
+            return PageType.POETIC_COLLECTION, "has_significant_links_in_lists"
 
-        return PageType.OTHER
+        return PageType.OTHER, "no_signals_matched"
 
     def extract_sub_page_titles(self) -> Set[str]:
         """

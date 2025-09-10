@@ -184,10 +184,10 @@ class ScraperOrchestrator:
                     wikicode = mwparserfromhell.parse(wikitext)
                     
                     classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
-                    page_type = classifier.classify()
+                    page_type, classification_reason = classifier.classify()
 
                     if self.tree_logger:
-                        self.tree_logger.add_node(author_cat, parent_title, page_title, page_type)
+                        self.tree_logger.add_node(author_cat, parent_title, page_title, page_type, classification_reason)
 
                     if page_type == PageType.POEM:
                         try:
@@ -198,14 +198,14 @@ class ScraperOrchestrator:
                             self.skipped_counter += 1
                     
                     elif page_type in [PageType.POETIC_COLLECTION, PageType.MULTI_VERSION_HUB]:
-                        logger.info(f"Page '{page_title}' is a {page_type.name}. Extracting and enqueuing sub-pages.")
+                        logger.info(f"Page '{page_title}' is a {page_type.name} ({classification_reason}). Extracting and enqueuing sub-pages.")
                         sub_titles = classifier.extract_sub_page_titles()
                         if sub_titles:
                             await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
                         self.skipped_counter += 1
                     
                     else:
-                        logger.debug(f"Skipping page '{page_title}' classified as {page_type.name}.")
+                        logger.debug(f"Skipping page '{page_title}' classified as {page_type.name} ({classification_reason}).")
                         self.skipped_counter += 1
 
                 except Exception as e:

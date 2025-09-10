@@ -39,7 +39,7 @@ class HierarchicalLogger:
         return None
 
     def add_node(
-        self, author_cat: str, parent_title: str, page_title: str, page_type: PageType
+        self, author_cat: str, parent_title: str, page_title: str, page_type: PageType, reason: str
     ):
         """Ajoute une page (nœud) à l'arborescence de son auteur."""
         with self._lock:
@@ -55,7 +55,7 @@ class HierarchicalLogger:
             if page_title not in parent_node["children"]:
                 parent_node["children"][page_title] = {
                     "name": page_title,
-                    "type": page_type.name,
+                    "type": f"{page_type.name} ({reason})",
                     "children": {},
                 }
 

@@ -159,7 +159,8 @@ class PageClassifier:
                 continue
 
             try:
-                raw_title = href.split("/")[-1].split("#")[0]
+                path = href.split("wiki/", 1)[1]
+                raw_title = path.split("#", 1)[0]
                 title = unquote(raw_title).replace("_", " ")
                 if title and title != self.title:
                     titles.add(title)

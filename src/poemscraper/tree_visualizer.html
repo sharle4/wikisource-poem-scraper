@@ -6,92 +6,106 @@
     <title>Visualiseur d'Arbre d'Exploration Interactif</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --text-color: #333;
+            --header-bg: #fff;
+            --border-color: #dee2e6;
+            --link-color: #0d6efd;
+            --tooltip-bg: rgba(33, 37, 41, 0.9);
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
-            padding: 0;
-            background-color: #f0f2f5;
-            color: #333;
+            background-color: var(--bg-color);
+            color: var(--text-color);
             display: flex;
             flex-direction: column;
             height: 100vh;
             overflow: hidden;
         }
-        #controls {
-            padding: 15px 20px;
-            background-color: #fff;
-            border-bottom: 1px solid #dee2e6;
+        #top-bar, #controls {
+            padding: 10px 20px;
+            background-color: var(--header-bg);
+            border-bottom: 1px solid var(--border-color);
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             display: flex;
             align-items: center;
-            justify-content: center;
             flex-wrap: wrap;
-            gap: 20px;
+            gap: 15px;
         }
-        h1 {
-            margin: 0;
-            font-size: 1.4em;
-            color: #212529;
-        }
+        h1 { margin: 0; font-size: 1.3em; color: #212529; }
+        .control-group { display: flex; align-items: center; gap: 8px; font-size: 0.9em; }
+        label, .control-group span { font-weight: 500; color: #495057; }
+        select, input[type="text"] { padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; }
         #file-input-label {
-            border: 1px solid #ccc;
             display: inline-block;
             padding: 6px 12px;
             cursor: pointer;
             border-radius: 4px;
-            background-color: #0d6efd;
+            background-color: var(--link-color);
             color: white;
             font-weight: 500;
+            border: none;
         }
-        #info-panel {
-            font-size: 0.9em;
-            color: #6c757d;
-        }
-        #chart-container {
-            flex-grow: 1;
-            position: relative;
-        }
-        svg {
-            width: 100%;
-            height: 100%;
-        }
-        .node circle {
-            cursor: pointer;
-            stroke-width: 2px;
-        }
+        #info-panel { font-size: 0.9em; color: #6c757d; white-space: nowrap; }
+        #chart-container { flex-grow: 1; position: relative; }
+        svg { width: 100%; height: 100%; cursor: grab; }
+        .node circle { cursor: pointer; stroke-width: 2px; }
         .node text {
-            font-size: 12px;
+            font-size: 11px;
             paint-order: stroke;
-            stroke: #f0f2f5;
-            stroke-width: 3.5px;
+            stroke: var(--bg-color);
+            stroke-width: 3px;
             stroke-linecap: butt;
             stroke-linejoin: round;
         }
-        .link {
-            fill: none;
-            stroke: #adb5bd;
-            stroke-width: 1.5px;
-        }
+        .node a { text-decoration: none; fill: #212529; }
+        .node a:hover text { text-decoration: underline; }
+        .link { fill: none; stroke: #adb5bd; stroke-opacity: 0.6; stroke-width: 1.5px; }
         .tooltip {
             position: absolute;
-            background-color: rgba(33, 37, 41, 0.9);
+            background-color: var(--tooltip-bg);
             color: white;
             padding: 8px 12px;
             border-radius: 5px;
-            font-size: 13px;
+            font-size: 12px;
             pointer-events: none;
             opacity: 0;
             transition: opacity 0.2s;
-            max-width: 300px;
+            max-width: 350px;
+            line-height: 1.4;
         }
     </style>
 </head>
 <body>
-    <div id="controls">
+    <div id="top-bar">
         <h1>Visualiseur d'Arbre Wikisource</h1>
-        <label id="file-input-label" for="file-input" class="btn">Charger un fichier JSON</label>
+        <label id="file-input-label" for="file-input">Charger un fichier JSON</label>
         <input type="file" id="file-input" accept=".json" style="display: none;">
         <div id="info-panel">Veuillez charger un fichier pour commencer.</div>
+        <div class="control-group" style="margin-left: auto;">
+             <label for="lang-input">Langue :</label>
+             <input type="text" id="lang-input" value="fr" size="3">
+        </div>
+    </div>
+    <div id="controls">
+        <div class="control-group">
+            <span>Filtrer par type :</span>
+            <div id="type-filters"></div>
+        </div>
+        <div class="control-group">
+            <label for="sort-by">Trier par :</label>
+            <select id="sort-by">
+                <option value="name">Nom</option>
+                <option value="timestamp">Date</option>
+                <option value="childCount">Nombre d'enfants</option>
+            </select>
+            <select id="sort-order">
+                <option value="asc">Ascendant</option>
+                <option value="desc">Descendant</option>
+            </select>
+        </div>
     </div>
     <div id="chart-container">
         <svg id="chart"></svg>
@@ -99,94 +113,138 @@
     <div class="tooltip" id="tooltip"></div>
 
     <script>
-        document.getElementById('file-input-label').addEventListener('click', () => {
-             document.getElementById('file-input').click();
-        });
+        document.getElementById('file-input-label').addEventListener('click', () => document.getElementById('file-input').click());
         document.getElementById('file-input').addEventListener('change', handleFileSelect);
+        document.getElementById('sort-by').addEventListener('change', applyFiltersAndSort);
+        document.getElementById('sort-order').addEventListener('change', applyFiltersAndSort);
 
         const colorScale = d3.scaleOrdinal()
             .domain(["POEM", "POETIC_COLLECTION", "MULTI_VERSION_HUB", "OTHER", "AUTHOR"])
             .range(["#28a745", "#0d6efd", "#6f42c1", "#6c757d", "#fd7e14"]);
         
         const tooltip = d3.select("#tooltip");
-        let root;
+        let originalData, currentRoot;
         let i = 0;
-
+        
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (!file) return;
-            
             const reader = new FileReader();
             reader.onload = e => {
-                const data = JSON.parse(e.target.result);
-                document.getElementById('info-panel').innerHTML = `
-                    <strong>Auteur :</strong> ${data.name} | 
-                    <strong>Pages directes :</strong> ${data.direct_children} | 
-                    <strong>Total descendants :</strong> ${data.total_descendants}
-                `;
-                renderTree(data);
+                originalData = JSON.parse(e.target.result);
+                setupTypeFilters(originalData);
+                applyFiltersAndSort();
             };
             reader.readAsText(file);
         }
 
+        function setupTypeFilters(data) {
+            const types = new Set();
+            d3.hierarchy(data).each(d => types.add(d.data.type));
+            
+            const filterContainer = d3.select("#type-filters");
+            filterContainer.html("");
+            types.forEach(type => {
+                const label = filterContainer.append("label").style("display", "inline-flex").style("align-items", "center").style("margin-right", "10px");
+                label.append("input")
+                    .attr("type", "checkbox")
+                    .attr("checked", true)
+                    .attr("id", `filter-${type}`)
+                    .on("change", applyFiltersAndSort);
+                label.append("span")
+                    .style("margin-left", "4px")
+                    .style("color", colorScale(type))
+                    .text(type);
+            });
+        }
+
+        function applyFiltersAndSort() {
+            if (!originalData) return;
+            
+            const activeTypes = new Set();
+            d3.selectAll("#type-filters input").each(function() {
+                if (this.checked) activeTypes.add(this.id.replace("filter-", ""));
+            });
+
+            const dataCopy = JSON.parse(JSON.stringify(originalData));
+
+            function filter(node) {
+                if (node.children) {
+                    node.children = node.children.filter(filter);
+                }
+                return activeTypes.has(node.type) || (node.children && node.children.length > 0);
+            }
+            
+            filter(dataCopy);
+
+            const sortBy = document.getElementById('sort-by').value;
+            const sortOrder = document.getElementById('sort-order').value === 'asc' ? 1 : -1;
+
+            dataCopy.children.sort((a, b) => {
+                 let valA, valB;
+                 if (sortBy === 'childCount') {
+                     valA = a.children?.length || 0;
+                     valB = b.children?.length || 0;
+                 } else {
+                     valA = a[sortBy];
+                     valB = b[sortBy];
+                 }
+                 if (valA < valB) return -1 * sortOrder;
+                 if (valA > valB) return 1 * sortOrder;
+                 return 0;
+            });
+            
+            document.getElementById('info-panel').innerHTML = `
+                <strong>Auteur :</strong> ${dataCopy.name} | 
+                <strong>Pages directes :</strong> ${dataCopy.direct_children} | 
+                <strong>Total descendants :</strong> ${dataCopy.total_descendants}
+            `;
+            renderTree(dataCopy);
+        }
+        
         function renderTree(data) {
             const container = document.getElementById('chart-container');
             const width = container.clientWidth;
             const height = container.clientHeight;
-            const margin = { top: 20, right: 250, bottom: 20, left: 50 };
-
-            const svg = d3.select("#chart")
-                .html("") 
-                .attr("viewBox", [0, 0, width, height]);
-
-            const g = svg.append("g")
-                .attr("transform", `translate(${margin.left},${margin.top})`);
             
-            const zoom = d3.zoom()
-                .scaleExtent([0.1, 5])
-                .on("zoom", (event) => {
-                    g.attr("transform", event.transform);
-                });
+            const svg = d3.select("#chart")
+                .html("")
+                .attr("viewBox", [-width / 2, -height / 2, width, height]);
+
+            const g = svg.append("g");
+            
+            const zoom = d3.zoom().scaleExtent([0.1, 5]).on("zoom", (event) => g.attr("transform", event.transform));
             svg.call(zoom);
 
-            const dx = 20;
-            const dy = (width - margin.right - margin.left) / 4;
-            const tree = d3.tree().nodeSize([dx, dy]);
+            const radius = Math.min(width, height) / 2 * 0.8;
+            const tree = d3.tree().size([2 * Math.PI, radius]).separation((a, b) => (a.parent == b.parent ? 1 : 2) / a.depth);
             
-            root = d3.hierarchy(data, d => d.children);
-            root.x0 = height / 2;
-            root.y0 = 0;
+            currentRoot = d3.hierarchy(data, d => d.children);
+            currentRoot.x0 = 0;
+            currentRoot.y0 = 0;
             
-            root.descendants().forEach((d, index) => {
+            currentRoot.descendants().forEach((d, index) => {
                 d.id = index;
                 d._children = d.children;
-                if (d.depth > 1) d.children = null;
+                 if (d.depth > 0) d.children = null;
             });
-            
-            update(root);
+
+            update(currentRoot);
 
             function update(source) {
                 const duration = 250;
-                const nodes = root.descendants().reverse();
-                const links = root.links();
+                const nodes = currentRoot.descendants().reverse();
+                const links = currentRoot.links();
 
-                tree(root);
-
-                let left = root;
-                let right = root;
-                root.eachBefore(node => {
-                    if (node.x < left.x) left = node;
-                    if (node.x > right.x) right = node;
-                });
+                tree(currentRoot);
                 
                 const transition = g.transition().duration(duration);
 
-                const node = g.selectAll("g.node")
-                    .data(nodes, d => d.id);
+                const node = g.selectAll("g.node").data(nodes, d => d.id);
 
                 const nodeEnter = node.enter().append("g")
                     .attr("class", "node")
-                    .attr("transform", d => `translate(${source.y0},${source.x0})`)
+                    .attr("transform", `translate(${source.y0},${source.x0})`)
                     .attr("fill-opacity", 0)
                     .attr("stroke-opacity", 0)
                     .on("click", (event, d) => {
@@ -199,61 +257,59 @@
                     .attr("stroke", d => colorScale(d.data.type))
                     .attr("fill", d => d._children ? colorScale(d.data.type) : "#fff");
 
-                nodeEnter.append("text")
-                    .attr("dy", "0.31em")
-                    .attr("x", d => d._children ? -8 : 8)
-                    .attr("text-anchor", d => d._children ? "end" : "start")
-                    .text(d => d.data.name)
-                    .clone(true).lower()
-                    .attr("stroke-linejoin", "round")
-                    .attr("stroke-width", 3)
-                    .attr("stroke", "#f0f2f5");
+                const textLink = nodeEnter.append("a")
+                    .attr("xlink:href", d => `https://${document.getElementById('lang-input').value}.wikisource.org/wiki/${encodeURIComponent(d.data.name.replace(/ /g, '_'))}`)
+                    .attr("target", "_blank");
                 
-                nodeEnter
-                    .on("mouseover", (event, d) => {
-                        tooltip.transition().duration(200).style("opacity", 1);
-                        tooltip.html(
-                            `<strong>${d.data.name}</strong><br/>` +
-                            `Type: ${d.data.type} (${d.data.reason})<br/>` +
-                            `Timestamp: ${new Date(d.data.timestamp).toLocaleString()}`
-                        )
-                        .style("left", (event.pageX + 15) + "px")
-                        .style("top", (event.pageY - 10) + "px");
-                    })
-                    .on("mouseout", () => {
-                        tooltip.transition().duration(500).style("opacity", 0);
-                    });
+                textLink.append("text")
+                    .attr("transform", d => `rotate(${d.x * 180 / Math.PI - 90}) translate(${d.y > 0 ? 8 : -8}, 0) rotate(${d.x > Math.PI / 2 && d.x < 3 * Math.PI / 2 ? 180 : 0})`)
+                    .attr("dy", "0.31em")
+                    .attr("text-anchor", d => d.y > 0 ? "start" : "end")
+                    .text(d => `${d.data.name}${d.data.children && d.data.children.length > 0 ? ` (${d.data.children.length})` : ''}`)
+                    .clone(true).lower()
+                    .attr("stroke", "#fff");
 
-                node.merge(nodeEnter).transition(transition)
-                    .attr("transform", d => `translate(${d.y},${d.x})`)
+                nodeEnter.on("mouseover", (event, d) => {
+                    tooltip.transition().duration(200).style("opacity", 1);
+                    tooltip.html(
+                        `<strong>${d.data.name}</strong><br/>` +
+                        `Type: ${d.data.type} (${d.data.reason})<br/>` +
+                        `Timestamp: ${new Date(d.data.timestamp).toLocaleString()}`
+                    );
+                }).on("mousemove", (event) => {
+                    tooltip.style("left", (event.pageX + 15) + "px")
+                           .style("top", (event.pageY - 10) + "px");
+                }).on("mouseout", () => {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                });
+
+                const nodeUpdate = node.merge(nodeEnter).transition(transition)
+                    .attr("transform", d => `translate(${d3.pointRadial(d.x, d.y)})`)
                     .attr("fill-opacity", 1)
                     .attr("stroke-opacity", 1);
                 
+                nodeUpdate.select("text")
+                    .attr("transform", d => `rotate(${d.x * 180 / Math.PI - 90}) translate(${d.y > 0 ? 8 : -8}, 0) rotate(${d.x > Math.PI / 2 && d.x < 3 * Math.PI / 2 ? 180 : 0})`)
+                    .attr("text-anchor", d => d.y > 0 ? "start" : "end");
+
                 node.exit().transition(transition).remove()
                     .attr("transform", d => `translate(${source.y},${source.x})`)
                     .attr("fill-opacity", 0)
                     .attr("stroke-opacity", 0);
 
-                const link = g.selectAll("path.link")
-                    .data(links, d => d.target.id);
+                const link = g.selectAll("path.link").data(links, d => d.target.id);
                 
                 const linkEnter = link.enter().insert("path", "g")
                     .attr("class", "link")
-                    .attr("d", d => {
-                        const o = {x: source.x0, y: source.y0};
-                        return d3.linkHorizontal()({source: o, target: o});
-                    });
+                    .attr("d", d3.linkRadial().angle(e => source.x0).radius(e => source.y0));
 
                 link.merge(linkEnter).transition(transition)
-                    .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
+                    .attr("d", d3.linkRadial().angle(e => e.x).radius(e => e.y));
                 
                 link.exit().transition(transition).remove()
-                    .attr("d", d => {
-                        const o = {x: source.x, y: source.y};
-                        return d3.linkHorizontal()({source: o, target: o});
-                    });
+                    .attr("d", d3.linkRadial().angle(e => source.x).radius(e => source.y));
 
-                root.eachBefore(d => {
+                currentRoot.eachBefore(d => {
                     d.x0 = d.x;
                     d.y0 = d.y;
                 });

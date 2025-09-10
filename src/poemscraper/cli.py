@@ -5,14 +5,7 @@ import sys
 from pathlib import Path
 
 from .core import ScraperOrchestrator
-
-def setup_logging(level=logging.INFO):
-    """Configures the root logger for the application."""
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        stream=sys.stdout,
-    )
+from .log_manager import LogManager
 
 def main_cli():
     """Parses arguments and launches the main scraping process."""
@@ -75,10 +68,16 @@ def main_cli():
     args = parser.parse_args()
     
     log_level = logging.DEBUG if args.verbose else logging.INFO
-    setup_logging(log_level)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        stream=sys.stdout,
+    )
+
+    log_manager = LogManager(args.output_dir / "logs")
 
     try:
-        orchestrator = ScraperOrchestrator(config=args)
+        orchestrator = ScraperOrchestrator(config=args, log_manager=log_manager)
         asyncio.run(orchestrator.run())
     except KeyboardInterrupt:
         logging.info("Scraping process interrupted by user. Exiting gracefully.")

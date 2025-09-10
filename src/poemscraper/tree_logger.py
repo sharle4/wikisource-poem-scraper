@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict
+from datetime import datetime
 
 from .classifier import PageType
 
@@ -37,9 +38,9 @@ class HierarchicalLogger:
             if found:
                 return found
         return None
-
+    
     def add_node(
-        self, author_cat: str, parent_title: str, page_title: str, page_type: PageType, reason: str
+        self, author_cat: str, parent_title: str, page_title: str, page_type: PageType, reason: str, timestamp: datetime
     ):
         """Ajoute une page (nœud) à l'arborescence de son auteur."""
         with self._lock:
@@ -51,20 +52,32 @@ class HierarchicalLogger:
 
             if not parent_node:
                 parent_node = author_tree
+            
+            if "children" not in parent_node:
+                parent_node["children"] = {}
 
             if page_title not in parent_node["children"]:
                 parent_node["children"][page_title] = {
                     "name": page_title,
                     "type": f"{page_type.name} ({reason})",
+                    "timestamp": timestamp.isoformat(),
                     "children": {},
                 }
+
+    def _count_descendants(self, node: Dict) -> int:
+        """Compte récursivement tous les descendants d'un nœud."""
+        count = len(node.get("children", {}))
+        for child in node.get("children", {}).values():
+            count += self._count_descendants(child)
+        return count
 
     def _write_tree_recursive(
         self, file, node: Dict, prefix: str = "", is_last: bool = True
     ):
         """Écrit récursivement l'arborescence dans un fichier avec les bons préfixes."""
         connector = "└── " if is_last else "├── "
-        file.write(f"{prefix}{connector}{node['name']} [{node['type']}]\n")
+        timestamp = node.get('timestamp', '')
+        file.write(f"{prefix}{connector}{timestamp} - {node['name']} [{node['type']}]\n")
 
         child_prefix = "    " if is_last else "│   "
         children = list(node.get("children", {}).values())
@@ -81,7 +94,13 @@ class HierarchicalLogger:
             filepath = self.log_dir / filename
             try:
                 with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(f"{author_cat}\n")
+                    direct_children = len(tree.get("children", {}))
+                    total_descendants = self._count_descendants(tree)
+                    
+                    f.write(f"--- {author_cat} ---\n")
+                    f.write(f"Direct sub-pages explored: {direct_children}\n")
+                    f.write(f"Total descendants found: {total_descendants}\n\n")
+
                     children = list(tree.get("children", {}).values())
                     for i, child in enumerate(children):
                         self._write_tree_recursive(

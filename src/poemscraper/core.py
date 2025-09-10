@@ -6,6 +6,7 @@ import logging
 import queue
 import threading
 from typing import Set
+from datetime import datetime, timezone
 
 import mwparserfromhell
 from bs4 import BeautifulSoup
@@ -18,14 +19,16 @@ from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
 from .schemas import PoemSchema
 from .tree_logger import HierarchicalLogger
+from .log_manager import LogManager
 
 logger = logging.getLogger(__name__)
 
 class ScraperOrchestrator:
     """Orchestre le workflow de scraping intelligent et hiérarchique."""
 
-    def __init__(self, config):
+    def __init__(self, config, log_manager: LogManager):
         self.config = config
+        self.log_manager = log_manager
         self.api_endpoint = f"https://{config.lang}.wikisource.org/w/api.php"
 
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -37,9 +40,9 @@ class ScraperOrchestrator:
         
         self.tree_logger = None
         if self.config.tree_log:
-            log_dir = self.config.output_dir / "logs"
-            self.tree_logger = HierarchicalLogger(log_dir)
-            logger.info(f"Hierarchical logging enabled. Logs will be saved to {log_dir}")
+            tree_log_dir = self.config.output_dir / "logs" / "tree-logs"
+            self.tree_logger = HierarchicalLogger(tree_log_dir)
+            logger.info(f"Hierarchical tree logging enabled. Logs will be saved to {tree_log_dir}")
 
         self.processed_ids: Set[int] = set()
         self.processed_counter = 0
@@ -171,10 +174,12 @@ class ScraperOrchestrator:
                     continue
 
                 try:
+                    timestamp = datetime.now(timezone.utc)
                     page_data = await client.get_page_data_by_id(page_id)
                     if not page_data:
                         raise PageProcessingError("API did not return page data.")
                     
+                    page_url = page_data.get("fullurl", "")
                     page_html = await client.get_rendered_html(page_id)
                     if not page_html:
                         raise PageProcessingError("API did not return rendered HTML.")
@@ -187,7 +192,7 @@ class ScraperOrchestrator:
                     page_type, classification_reason = classifier.classify()
 
                     if self.tree_logger:
-                        self.tree_logger.add_node(author_cat, parent_title, page_title, page_type, classification_reason)
+                        self.tree_logger.add_node(author_cat, parent_title, page_title, page_type, classification_reason, timestamp)
 
                     if page_type == PageType.POEM:
                         try:
@@ -200,12 +205,20 @@ class ScraperOrchestrator:
                     elif page_type in [PageType.POETIC_COLLECTION, PageType.MULTI_VERSION_HUB]:
                         logger.info(f"Page '{page_title}' is a {page_type.name} ({classification_reason}). Extracting and enqueuing sub-pages.")
                         sub_titles = classifier.extract_sub_page_titles()
+                        children_count = len(sub_titles)
+                        
+                        if page_type == PageType.POETIC_COLLECTION:
+                            self.log_manager.log_collection(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
+                        else: # MULTI_VERSION_HUB
+                            self.log_manager.log_hub(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
+
                         if sub_titles:
                             await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
                         self.skipped_counter += 1
                     
-                    else:
+                    else: # OTHER
                         logger.debug(f"Skipping page '{page_title}' classified as {page_type.name} ({classification_reason}).")
+                        self.log_manager.log_other(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason)
                         self.skipped_counter += 1
 
                 except Exception as e:

@@ -236,7 +236,6 @@ class ScraperOrchestrator:
                 
                 page_id = p_info.get("pageid")
                 if page_id and page_id not in self.processed_ids:
-                    pbar.total += 1
                     pbar.refresh()
                     await queue.put({
                         'page_info': p_info,

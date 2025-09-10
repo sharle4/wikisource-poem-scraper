@@ -56,7 +56,7 @@
             font-size: 11px;
             paint-order: stroke;
             stroke: var(--bg-color);
-            stroke-width: 3px;
+            stroke-width: 3.5px;
             stroke-linecap: butt;
             stroke-linejoin: round;
         }
@@ -81,7 +81,7 @@
 <body>
     <div id="top-bar">
         <h1>Visualiseur d'Arbre Wikisource</h1>
-        <label id="file-input-label" for="file-input">Charger un fichier JSON</label>
+        <label id="file-input-label">Charger un fichier JSON</label>
         <input type="file" id="file-input" accept=".json" style="display: none;">
         <div id="info-panel">Veuillez charger un fichier pour commencer.</div>
         <div class="control-group" style="margin-left: auto;">
@@ -180,19 +180,25 @@
             const sortBy = document.getElementById('sort-by').value;
             const sortOrder = document.getElementById('sort-order').value === 'asc' ? 1 : -1;
 
-            dataCopy.children.sort((a, b) => {
-                 let valA, valB;
-                 if (sortBy === 'childCount') {
-                     valA = a.children?.length || 0;
-                     valB = b.children?.length || 0;
-                 } else {
-                     valA = a[sortBy];
-                     valB = b[sortBy];
-                 }
-                 if (valA < valB) return -1 * sortOrder;
-                 if (valA > valB) return 1 * sortOrder;
-                 return 0;
-            });
+            function sortNodes(node) {
+                if (node.children) {
+                    node.children.sort((a, b) => {
+                        let valA, valB;
+                        if (sortBy === 'childCount') {
+                            valA = a.children?.length || 0;
+                            valB = b.children?.length || 0;
+                        } else {
+                            valA = a[sortBy];
+                            valB = b[sortBy];
+                        }
+                        if (valA < valB) return -1 * sortOrder;
+                        if (valA > valB) return 1 * sortOrder;
+                        return 0;
+                    });
+                    node.children.forEach(sortNodes);
+                }
+            }
+            sortNodes(dataCopy);
             
             document.getElementById('info-panel').innerHTML = `
                 <strong>Auteur :</strong> ${dataCopy.name} | 
@@ -206,27 +212,30 @@
             const container = document.getElementById('chart-container');
             const width = container.clientWidth;
             const height = container.clientHeight;
-            
+            const margin = { top: 20, right: 250, bottom: 20, left: 120 };
+
             const svg = d3.select("#chart")
                 .html("")
-                .attr("viewBox", [-width / 2, -height / 2, width, height]);
+                .attr("viewBox", [0, 0, width, height]);
 
-            const g = svg.append("g");
+            const g = svg.append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
             
             const zoom = d3.zoom().scaleExtent([0.1, 5]).on("zoom", (event) => g.attr("transform", event.transform));
             svg.call(zoom);
 
-            const radius = Math.min(width, height) / 2 * 0.8;
-            const tree = d3.tree().size([2 * Math.PI, radius]).separation((a, b) => (a.parent == b.parent ? 1 : 2) / a.depth);
+            const dx = 25;
+            const dy = width / 4;
+            const tree = d3.tree().nodeSize([dx, dy]);
             
             currentRoot = d3.hierarchy(data, d => d.children);
-            currentRoot.x0 = 0;
+            currentRoot.x0 = height / 2;
             currentRoot.y0 = 0;
             
             currentRoot.descendants().forEach((d, index) => {
                 d.id = index;
                 d._children = d.children;
-                 if (d.depth > 0) d.children = null;
+                if (d.depth > 0) d.children = null;
             });
 
             update(currentRoot);
@@ -238,6 +247,17 @@
 
                 tree(currentRoot);
                 
+                let left = currentRoot;
+                let right = currentRoot;
+                currentRoot.eachBefore(node => {
+                    if (node.x < left.x) left = node;
+                    if (node.x > right.x) right = node;
+                });
+                const newHeight = right.x - left.x + margin.top + margin.bottom;
+                
+                svg.transition().duration(duration)
+                   .attr("viewBox", [-margin.left, left.x - margin.top, width, newHeight]);
+
                 const transition = g.transition().duration(duration);
 
                 const node = g.selectAll("g.node").data(nodes, d => d.id);
@@ -259,13 +279,14 @@
 
                 const textLink = nodeEnter.append("a")
                     .attr("xlink:href", d => `https://${document.getElementById('lang-input').value}.wikisource.org/wiki/${encodeURIComponent(d.data.name.replace(/ /g, '_'))}`)
-                    .attr("target", "_blank");
+                    .attr("target", "_blank")
+                    .on("click", event => event.stopPropagation());
                 
                 textLink.append("text")
-                    .attr("transform", d => `rotate(${d.x * 180 / Math.PI - 90}) translate(${d.y > 0 ? 8 : -8}, 0) rotate(${d.x > Math.PI / 2 && d.x < 3 * Math.PI / 2 ? 180 : 0})`)
+                    .attr("x", d => d._children ? -8 : 8)
                     .attr("dy", "0.31em")
-                    .attr("text-anchor", d => d.y > 0 ? "start" : "end")
-                    .text(d => `${d.data.name}${d.data.children && d.data.children.length > 0 ? ` (${d.data.children.length})` : ''}`)
+                    .attr("text-anchor", d => d._children ? "end" : "start")
+                    .text(d => `${d.data.name}${d._children ? ` (${d._children.length})` : ''}`)
                     .clone(true).lower()
                     .attr("stroke", "#fff");
 
@@ -283,15 +304,11 @@
                     tooltip.transition().duration(500).style("opacity", 0);
                 });
 
-                const nodeUpdate = node.merge(nodeEnter).transition(transition)
-                    .attr("transform", d => `translate(${d3.pointRadial(d.x, d.y)})`)
+                node.merge(nodeEnter).transition(transition)
+                    .attr("transform", d => `translate(${d.y},${d.x})`)
                     .attr("fill-opacity", 1)
                     .attr("stroke-opacity", 1);
                 
-                nodeUpdate.select("text")
-                    .attr("transform", d => `rotate(${d.x * 180 / Math.PI - 90}) translate(${d.y > 0 ? 8 : -8}, 0) rotate(${d.x > Math.PI / 2 && d.x < 3 * Math.PI / 2 ? 180 : 0})`)
-                    .attr("text-anchor", d => d.y > 0 ? "start" : "end");
-
                 node.exit().transition(transition).remove()
                     .attr("transform", d => `translate(${source.y},${source.x})`)
                     .attr("fill-opacity", 0)
@@ -301,13 +318,19 @@
                 
                 const linkEnter = link.enter().insert("path", "g")
                     .attr("class", "link")
-                    .attr("d", d3.linkRadial().angle(e => source.x0).radius(e => source.y0));
+                    .attr("d", d => {
+                        const o = {x: source.x0, y: source.y0};
+                        return d3.linkHorizontal()({source: o, target: o});
+                    });
 
                 link.merge(linkEnter).transition(transition)
-                    .attr("d", d3.linkRadial().angle(e => e.x).radius(e => e.y));
+                    .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
                 
                 link.exit().transition(transition).remove()
-                    .attr("d", d3.linkRadial().angle(e => source.x).radius(e => source.y));
+                    .attr("d", d => {
+                        const o = {x: source.x, y: source.y};
+                        return d3.linkHorizontal()({source: o, target: o});
+                    });
 
                 currentRoot.eachBefore(d => {
                     d.x0 = d.x;

@@ -63,13 +63,14 @@ class HierarchicalLogger:
                     "type": page_type.name,
                     "reason": reason,
                     "timestamp": timestamp.isoformat(),
-                    "children": [],
+                    "children": {},
                 }
 
     def _count_descendants(self, node: Dict) -> int:
         """Compte récursivement tous les descendants d'un nœud."""
-        count = len(node.get("children", []))
-        for child in node.get("children", []):
+        children_collection = node.get("children", {})
+        count = len(children_collection)
+        for child in children_collection.values():
             count += self._count_descendants(child)
         return count
 
@@ -100,6 +101,9 @@ class HierarchicalLogger:
         """Écrit tous les arbres construits dans leurs fichiers respectifs (TXT et JSON)."""
         logger.info(f"Writing {len(self.trees)} exploration tree logs...")
         for author_cat, tree in self.trees.items():
+            direct_children = len(tree.get("children", {}))
+            total_descendants = self._count_descendants(tree)
+
             self._convert_children_dict_to_list(tree)
             
             filename_base = _sanitize_filename(author_cat.split(":")[-1])
@@ -107,9 +111,6 @@ class HierarchicalLogger:
             filepath_txt = self.log_dir / f"{filename_base}.txt"
             try:
                 with open(filepath_txt, "w", encoding="utf-8") as f:
-                    direct_children = len(tree.get("children", []))
-                    total_descendants = self._count_descendants(tree)
-                    
                     f.write(f"--- {author_cat} ---\n")
                     f.write(f"Direct sub-pages explored: {direct_children}\n")
                     f.write(f"Total descendants found: {total_descendants}\n\n")
@@ -124,9 +125,9 @@ class HierarchicalLogger:
 
             filepath_json = self.log_dir / f"{filename_base}.json"
             try:
+                tree["direct_children"] = direct_children
+                tree["total_descendants"] = total_descendants
                 with open(filepath_json, "w", encoding="utf-8") as f:
-                    tree["direct_children"] = len(tree.get("children", []))
-                    tree["total_descendants"] = self._count_descendants(tree)
                     json.dump(tree, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.error(f"Failed to write JSON log file {filepath_json}: {e}")

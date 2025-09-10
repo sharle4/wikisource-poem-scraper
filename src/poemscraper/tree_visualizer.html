@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualiseur d'Arbre d'Exploration</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #controls {
+            padding: 20px;
+            background-color: #fff;
+            border-bottom: 1px solid #dee2e6;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 1.5em;
+        }
+        
+        #file-input {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        #chart-container {
+            flex-grow: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .node circle {
+            cursor: pointer;
+            stroke-width: 1.5px;
+            stroke: #333;
+        }
+
+        .node text {
+            font-size: 11px;
+            paint-order: stroke;
+            stroke: #fff;
+            stroke-width: 3px;
+            stroke-linecap: butt;
+            stroke-linejoin: round;
+        }
+        
+        .link {
+            fill: none;
+            stroke: #ccc;
+            stroke-width: 1.5px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h1>Visualiseur d'Arbre d'Exploration Wikisource</h1>
+        <p>Chargez un fichier <code>.json</code> généré par le scraper pour visualiser la structure d'exploration d'un auteur.</p>
+        <input type="file" id="file-input" accept=".json">
+    </div>
+    <div id="chart-container">
+        <svg id="chart"></svg>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        document.getElementById('file-input').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = JSON.parse(e.target.result);
+                renderTree(data);
+            };
+            reader.readAsText(file);
+        });
+
+        function renderTree(data) {
+            const container = document.getElementById('chart-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            const margin = { top: 50, right: 120, bottom: 50, left: 120 };
+
+            const svg = d3.select("#chart")
+                .attr("viewBox", [-margin.left, -margin.top, width, height])
+                .html("");
+
+            const root = d3.hierarchy(data, d => d.children);
+            const nodeSize = 17;
+            const dx = 25;
+            const dy = width / (root.height + 2);
+            
+            const tree = d3.tree().nodeSize([dx, dy]);
+            tree(root);
+
+            const g = svg.append("g")
+                .attr("transform", `translate(${dy / 2}, 0)`);
+            
+            const zoom = d3.zoom()
+                .scaleExtent([0.1, 3])
+                .on("zoom", (event) => {
+                    g.attr("transform", event.transform);
+                });
+            svg.call(zoom);
+
+            const tooltip = d3.select("#tooltip");
+
+            const link = g.append("g")
+                .attr("fill", "none")
+                .attr("stroke", "#999")
+                .attr("stroke-opacity", 0.6)
+                .attr("stroke-width", 1.5)
+                .selectAll("path")
+                .data(root.links())
+                .join("path")
+                .attr("d", d3.linkHorizontal()
+                    .x(d => d.y)
+                    .y(d => d.x));
+
+            const node = g.append("g")
+                .selectAll("g")
+                .data(root.descendants())
+                .join("g")
+                .attr("transform", d => `translate(${d.y},${d.x})`);
+            
+            const colorScale = d3.scaleOrdinal()
+                .domain(["POEM", "POETIC_COLLECTION", "MULTI_VERSION_HUB", "OTHER", "AUTHOR"])
+                .range(["#4caf50", "#2196f3", "#9c27b0", "#9e9e9e", "#ff9800"]);
+
+            node.append("circle")
+                .attr("fill", d => d.children ? colorScale(d.data.type) : "#fff")
+                .attr("stroke", d => colorScale(d.data.type))
+                .attr("r", 5)
+                .on("click", (event, d) => {
+                    if (d.children) {
+                        d._children = d.children;
+                        d.children = null;
+                    } else {
+                        d.children = d._children;
+                        d._children = null;
+                    }
+                    console.log("Node clicked, dynamic update not implemented in this simple example.");
+                })
+                .on("mouseover", (event, d) => {
+                    tooltip.transition().duration(200).style("opacity", .9);
+                    tooltip.html(
+                        `<strong>${d.data.name}</strong><br/>` +
+                        `Type: ${d.data.type} (${d.data.reason})<br/>` +
+                        `Timestamp: ${new Date(d.data.timestamp).toLocaleString()}`
+                    )
+                    .style("left", (event.pageX + 15) + "px")
+                    .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", () => {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                });
+
+            node.append("text")
+                .attr("dy", "0.31em")
+                .attr("x", d => d.children ? -8 : 8)
+                .attr("text-anchor", d => d.children ? "end" : "start")
+                .text(d => d.data.name)
+                .clone(true).lower()
+                .attr("stroke", "white");
+        }
+    </script>
+</body>
+</html>

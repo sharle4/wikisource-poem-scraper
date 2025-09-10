@@ -1,5 +1,6 @@
 import logging
 import re
+import json
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict
@@ -14,13 +15,13 @@ def _sanitize_filename(name: str) -> str:
     """Nettoie une chaîne pour en faire un nom de fichier valide."""
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
     name = name.replace(" ", "_").lower()
-    return f"{name}.txt"
+    return name
 
 
 class HierarchicalLogger:
     """
-    Construit et écrit des journaux d'exploration en arborescence pour chaque auteur.
-    Cette classe est conçue pour être thread-safe.
+    Construit et écrit des journaux d'exploration en arborescence pour chaque auteur,
+    à la fois en format texte et en format JSON pour la visualisation.
     """
 
     def __init__(self, log_dir: Path):
@@ -59,52 +60,73 @@ class HierarchicalLogger:
             if page_title not in parent_node["children"]:
                 parent_node["children"][page_title] = {
                     "name": page_title,
-                    "type": f"{page_type.name} ({reason})",
+                    "type": page_type.name,
+                    "reason": reason,
                     "timestamp": timestamp.isoformat(),
-                    "children": {},
+                    "children": [],
                 }
 
     def _count_descendants(self, node: Dict) -> int:
         """Compte récursivement tous les descendants d'un nœud."""
-        count = len(node.get("children", {}))
-        for child in node.get("children", {}).values():
+        count = len(node.get("children", []))
+        for child in node.get("children", []):
             count += self._count_descendants(child)
         return count
 
-    def _write_tree_recursive(
+    def _convert_children_dict_to_list(self, node: Dict):
+        """Convertit récursivement les dictionnaires d'enfants en listes pour la sortie JSON."""
+        if "children" in node and isinstance(node["children"], dict):
+            node["children"] = list(node["children"].values())
+            for child in node["children"]:
+                self._convert_children_dict_to_list(child)
+
+    def _write_tree_recursive_txt(
         self, file, node: Dict, prefix: str = "", is_last: bool = True
     ):
-        """Écrit récursivement l'arborescence dans un fichier avec les bons préfixes."""
+        """Écrit récursivement l'arborescence au format texte."""
         connector = "└── " if is_last else "├── "
         timestamp = node.get('timestamp', '')
-        file.write(f"{prefix}{connector}{timestamp} - {node['name']} [{node['type']}]\n")
+        full_type = f"{node.get('type', '')} ({node.get('reason', '')})"
+        file.write(f"{prefix}{connector}{timestamp} - {node['name']} [{full_type}]\n")
 
         child_prefix = "    " if is_last else "│   "
-        children = list(node.get("children", {}).values())
+        children = node.get("children", [])
         for i, child in enumerate(children):
-            self._write_tree_recursive(
+            self._write_tree_recursive_txt(
                 file, child, prefix + child_prefix, i == len(children) - 1
             )
-
+            
     def write_log_files(self):
-        """Écrit tous les arbres construits dans leurs fichiers respectifs."""
+        """Écrit tous les arbres construits dans leurs fichiers respectifs (TXT et JSON)."""
         logger.info(f"Writing {len(self.trees)} exploration tree logs...")
         for author_cat, tree in self.trees.items():
-            filename = _sanitize_filename(author_cat.split(":")[-1])
-            filepath = self.log_dir / filename
+            self._convert_children_dict_to_list(tree)
+            
+            filename_base = _sanitize_filename(author_cat.split(":")[-1])
+            
+            filepath_txt = self.log_dir / f"{filename_base}.txt"
             try:
-                with open(filepath, "w", encoding="utf-8") as f:
-                    direct_children = len(tree.get("children", {}))
+                with open(filepath_txt, "w", encoding="utf-8") as f:
+                    direct_children = len(tree.get("children", []))
                     total_descendants = self._count_descendants(tree)
                     
                     f.write(f"--- {author_cat} ---\n")
                     f.write(f"Direct sub-pages explored: {direct_children}\n")
                     f.write(f"Total descendants found: {total_descendants}\n\n")
 
-                    children = list(tree.get("children", {}).values())
+                    children = tree.get("children", [])
                     for i, child in enumerate(children):
-                        self._write_tree_recursive(
+                        self._write_tree_recursive_txt(
                             f, child, "", i == len(children) - 1
                         )
             except Exception as e:
-                logger.error(f"Failed to write log file {filepath}: {e}")
+                logger.error(f"Failed to write TXT log file {filepath_txt}: {e}")
+
+            filepath_json = self.log_dir / f"{filename_base}.json"
+            try:
+                with open(filepath_json, "w", encoding="utf-8") as f:
+                    tree["direct_children"] = len(tree.get("children", []))
+                    tree["total_descendants"] = self._count_descendants(tree)
+                    json.dump(tree, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error(f"Failed to write JSON log file {filepath_json}: {e}")

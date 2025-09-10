@@ -145,7 +145,7 @@
             dragCounter++;
             dropZone.classList.add('dragging-over');
         });
-        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); });
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); }); // Essential for drop to work
         dropZone.addEventListener('dragleave', (e) => {
             e.preventDefault();
             dragCounter--;
@@ -298,17 +298,19 @@
             const margin = { top: 30, right: 250, bottom: 30, left: 120 };
 
             const svg = d3.select("#chart").html("").attr("viewBox", [0, 0, width, height]);
-            const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+            const g = svg.append("g");
             
             const zoom = d3.zoom().scaleExtent([0.1, 5]).on("zoom", (event) => g.attr("transform", event.transform));
+            svg.call(zoom.transform, d3.zoomIdentity.translate(margin.left, height / 2));
             svg.call(zoom);
+
 
             const dx = 25;
             const dy = width / 4;
             const tree = d3.tree().nodeSize([dx, dy]);
             
             currentRoot = d3.hierarchy(data, d => d.children);
-            currentRoot.x0 = height / 2;
+            currentRoot.x0 = 0;
             currentRoot.y0 = 0;
             
             currentRoot.descendants().forEach((d, index) => {
@@ -321,22 +323,12 @@
 
             function update(source) {
                 const duration = 250;
-                const nodes = currentRoot.descendants().reverse();
-                const links = currentRoot.links();
-
+                
                 tree(currentRoot);
-                
-                let left = currentRoot;
-                let right = currentRoot;
-                currentRoot.eachBefore(node => {
-                    if (node.x < left.x) left = node;
-                    if (node.x > right.x) right = node;
-                });
-                const newHeight = right.x - left.x + margin.top + margin.bottom;
-                
-                svg.transition().duration(duration)
-                   .attr("viewBox", [-margin.left, left.x - margin.top, width, newHeight]);
 
+                const nodes = currentRoot.descendants();
+                const links = currentRoot.links();
+                
                 const transition = g.transition().duration(duration);
 
                 const node = g.selectAll("g.node").data(nodes, d => d.id);
@@ -347,6 +339,7 @@
                     .attr("fill-opacity", 0)
                     .attr("stroke-opacity", 0)
                     .on("click", (event, d) => {
+                        event.stopPropagation();
                         d.children = d.children ? null : d._children;
                         update(d);
                     });

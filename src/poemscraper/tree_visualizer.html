@@ -76,6 +76,30 @@
             max-width: 350px;
             line-height: 1.4;
         }
+        body.dragging-over #chart-container::before {
+            content: 'Déposez le fichier JSON ici';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(13, 110, 253, 0.85);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            border: 4px dashed #fff;
+            z-index: 10;
+        }
+        #summary-panel { flex-grow: 1; display: flex; justify-content: flex-end; gap: 15px; font-size: 0.9em;}
+        .summary-item { display: inline-flex; align-items: center; }
+        .summary-color-box {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            border-radius: 2px;
+            border: 1px solid rgba(0,0,0,0.2);
+        }
+
     </style>
 </head>
 <body>
@@ -106,6 +130,7 @@
                 <option value="desc">Descendant</option>
             </select>
         </div>
+        <div id="summary-panel"></div>
     </div>
     <div id="chart-container">
         <svg id="chart"></svg>
@@ -113,6 +138,23 @@
     <div class="tooltip" id="tooltip"></div>
 
     <script>
+        const dropZone = document.body;
+        let dragCounter = 0;
+        dropZone.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            dragCounter++;
+            dropZone.classList.add('dragging-over');
+        });
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); });
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter === 0) {
+                dropZone.classList.remove('dragging-over');
+            }
+        });
+        dropZone.addEventListener('drop', handleDrop);
+
         document.getElementById('file-input-label').addEventListener('click', () => document.getElementById('file-input').click());
         document.getElementById('file-input').addEventListener('change', handleFileSelect);
         document.getElementById('sort-by').addEventListener('change', applyFiltersAndSort);
@@ -124,18 +166,62 @@
         
         const tooltip = d3.select("#tooltip");
         let originalData, currentRoot;
-        let i = 0;
         
         function handleFileSelect(event) {
             const file = event.target.files[0];
-            if (!file) return;
+            if (file) processFile(file);
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            dragCounter = 0;
+            dropZone.classList.remove('dragging-over');
+            if (event.dataTransfer.files.length) {
+                processFile(event.dataTransfer.files[0]);
+            }
+        }
+
+        function processFile(file) {
+            if (!file || !file.type.match('application/json')) {
+                alert("Veuillez utiliser un fichier JSON valide.");
+                return;
+            }
             const reader = new FileReader();
             reader.onload = e => {
-                originalData = JSON.parse(e.target.result);
-                setupTypeFilters(originalData);
-                applyFiltersAndSort();
+                try {
+                    originalData = JSON.parse(e.target.result);
+                    calculateAndDisplaySummary(originalData);
+                    setupTypeFilters(originalData);
+                    applyFiltersAndSort();
+                } catch (error) {
+                    alert("Erreur lors de la lecture du fichier JSON. Assurez-vous que le format est correct.");
+                    console.error(error);
+                }
             };
             reader.readAsText(file);
+        }
+
+        function calculateAndDisplaySummary(data) {
+            const counts = {};
+            const hierarchy = d3.hierarchy(data);
+            hierarchy.each(d => {
+                const type = d.data.type;
+                if (type) counts[type] = (counts[type] || 0) + 1;
+            });
+
+            const summaryContainer = d3.select("#summary-panel");
+            summaryContainer.html("");
+            summaryContainer.append("span").text("Bilan :");
+
+            colorScale.domain().forEach(type => {
+                if (counts[type]) {
+                    const item = summaryContainer.append("span").attr("class", "summary-item");
+                    item.append("div")
+                        .attr("class", "summary-color-box")
+                        .style("background-color", colorScale(type));
+                    item.append("span").text(`${type}: ${counts[type]}`);
+                }
+            });
         }
 
         function setupTypeFilters(data) {
@@ -169,12 +255,9 @@
             const dataCopy = JSON.parse(JSON.stringify(originalData));
 
             function filter(node) {
-                if (node.children) {
-                    node.children = node.children.filter(filter);
-                }
+                if (node.children) node.children = node.children.filter(filter);
                 return activeTypes.has(node.type) || (node.children && node.children.length > 0);
             }
-            
             filter(dataCopy);
 
             const sortBy = document.getElementById('sort-by').value;
@@ -188,8 +271,8 @@
                             valA = a.children?.length || 0;
                             valB = b.children?.length || 0;
                         } else {
-                            valA = a[sortBy];
-                            valB = b[sortBy];
+                            valA = a[sortBy] || (sortOrder === 1 ? Infinity : -Infinity);
+                            valB = b[sortBy] || (sortOrder === 1 ? Infinity : -Infinity);
                         }
                         if (valA < valB) return -1 * sortOrder;
                         if (valA > valB) return 1 * sortOrder;
@@ -212,14 +295,10 @@
             const container = document.getElementById('chart-container');
             const width = container.clientWidth;
             const height = container.clientHeight;
-            const margin = { top: 20, right: 250, bottom: 20, left: 120 };
+            const margin = { top: 30, right: 250, bottom: 30, left: 120 };
 
-            const svg = d3.select("#chart")
-                .html("")
-                .attr("viewBox", [0, 0, width, height]);
-
-            const g = svg.append("g")
-                .attr("transform", `translate(${margin.left},${margin.top})`);
+            const svg = d3.select("#chart").html("").attr("viewBox", [0, 0, width, height]);
+            const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
             
             const zoom = d3.zoom().scaleExtent([0.1, 5]).on("zoom", (event) => g.attr("transform", event.transform));
             svg.call(zoom);

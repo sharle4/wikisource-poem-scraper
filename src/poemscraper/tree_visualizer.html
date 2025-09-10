@@ -3,89 +3,95 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visualiseur d'Arbre d'Exploration</title>
+    <title>Visualiseur d'Arbre d'Exploration Interactif</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
             padding: 0;
-            background-color: #f8f9fa;
+            background-color: #f0f2f5;
             color: #333;
             display: flex;
             flex-direction: column;
             height: 100vh;
+            overflow: hidden;
         }
-
         #controls {
-            padding: 20px;
+            padding: 15px 20px;
             background-color: #fff;
             border-bottom: 1px solid #dee2e6;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
         }
-
         h1 {
-            margin: 0 0 10px 0;
-            font-size: 1.5em;
+            margin: 0;
+            font-size: 1.4em;
+            color: #212529;
         }
-        
-        #file-input {
-            padding: 8px 12px;
+        #file-input-label {
             border: 1px solid #ccc;
+            display: inline-block;
+            padding: 6px 12px;
+            cursor: pointer;
             border-radius: 4px;
+            background-color: #0d6efd;
+            color: white;
+            font-weight: 500;
         }
-
+        #info-panel {
+            font-size: 0.9em;
+            color: #6c757d;
+        }
         #chart-container {
             flex-grow: 1;
             position: relative;
-            overflow: hidden;
         }
-
         svg {
             width: 100%;
             height: 100%;
         }
-
         .node circle {
             cursor: pointer;
-            stroke-width: 1.5px;
-            stroke: #333;
+            stroke-width: 2px;
         }
-
         .node text {
-            font-size: 11px;
+            font-size: 12px;
             paint-order: stroke;
-            stroke: #fff;
-            stroke-width: 3px;
+            stroke: #f0f2f5;
+            stroke-width: 3.5px;
             stroke-linecap: butt;
             stroke-linejoin: round;
         }
-        
         .link {
             fill: none;
-            stroke: #ccc;
+            stroke: #adb5bd;
             stroke-width: 1.5px;
         }
-
         .tooltip {
             position: absolute;
-            background-color: rgba(0, 0, 0, 0.75);
+            background-color: rgba(33, 37, 41, 0.9);
             color: white;
-            padding: 8px;
+            padding: 8px 12px;
             border-radius: 5px;
-            font-size: 12px;
+            font-size: 13px;
             pointer-events: none;
             opacity: 0;
             transition: opacity 0.2s;
+            max-width: 300px;
         }
     </style>
 </head>
 <body>
     <div id="controls">
-        <h1>Visualiseur d'Arbre d'Exploration Wikisource</h1>
-        <p>Chargez un fichier <code>.json</code> généré par le scraper pour visualiser la structure d'exploration d'un auteur.</p>
-        <input type="file" id="file-input" accept=".json">
+        <h1>Visualiseur d'Arbre Wikisource</h1>
+        <label id="file-input-label" for="file-input" class="btn">Charger un fichier JSON</label>
+        <input type="file" id="file-input" accept=".json" style="display: none;">
+        <div id="info-panel">Veuillez charger un fichier pour commencer.</div>
     </div>
     <div id="chart-container">
         <svg id="chart"></svg>
@@ -93,106 +99,165 @@
     <div class="tooltip" id="tooltip"></div>
 
     <script>
-        document.getElementById('file-input').addEventListener('change', function(event) {
+        document.getElementById('file-input-label').addEventListener('click', () => {
+             document.getElementById('file-input').click();
+        });
+        document.getElementById('file-input').addEventListener('change', handleFileSelect);
+
+        const colorScale = d3.scaleOrdinal()
+            .domain(["POEM", "POETIC_COLLECTION", "MULTI_VERSION_HUB", "OTHER", "AUTHOR"])
+            .range(["#28a745", "#0d6efd", "#6f42c1", "#6c757d", "#fd7e14"]);
+        
+        const tooltip = d3.select("#tooltip");
+        let root;
+        let i = 0;
+
+        function handleFileSelect(event) {
             const file = event.target.files[0];
-            if (!file) {
-                return;
-            }
+            if (!file) return;
+            
             const reader = new FileReader();
-            reader.onload = function(e) {
+            reader.onload = e => {
                 const data = JSON.parse(e.target.result);
+                document.getElementById('info-panel').innerHTML = `
+                    <strong>Auteur :</strong> ${data.name} | 
+                    <strong>Pages directes :</strong> ${data.direct_children} | 
+                    <strong>Total descendants :</strong> ${data.total_descendants}
+                `;
                 renderTree(data);
             };
             reader.readAsText(file);
-        });
+        }
 
         function renderTree(data) {
             const container = document.getElementById('chart-container');
             const width = container.clientWidth;
             const height = container.clientHeight;
-            const margin = { top: 50, right: 120, bottom: 50, left: 120 };
+            const margin = { top: 20, right: 250, bottom: 20, left: 50 };
 
             const svg = d3.select("#chart")
-                .attr("viewBox", [-margin.left, -margin.top, width, height])
-                .html("");
-
-            const root = d3.hierarchy(data, d => d.children);
-            const nodeSize = 17;
-            const dx = 25;
-            const dy = width / (root.height + 2);
-            
-            const tree = d3.tree().nodeSize([dx, dy]);
-            tree(root);
+                .html("") 
+                .attr("viewBox", [0, 0, width, height]);
 
             const g = svg.append("g")
-                .attr("transform", `translate(${dy / 2}, 0)`);
+                .attr("transform", `translate(${margin.left},${margin.top})`);
             
             const zoom = d3.zoom()
-                .scaleExtent([0.1, 3])
+                .scaleExtent([0.1, 5])
                 .on("zoom", (event) => {
                     g.attr("transform", event.transform);
                 });
             svg.call(zoom);
 
-            const tooltip = d3.select("#tooltip");
-
-            const link = g.append("g")
-                .attr("fill", "none")
-                .attr("stroke", "#999")
-                .attr("stroke-opacity", 0.6)
-                .attr("stroke-width", 1.5)
-                .selectAll("path")
-                .data(root.links())
-                .join("path")
-                .attr("d", d3.linkHorizontal()
-                    .x(d => d.y)
-                    .y(d => d.x));
-
-            const node = g.append("g")
-                .selectAll("g")
-                .data(root.descendants())
-                .join("g")
-                .attr("transform", d => `translate(${d.y},${d.x})`);
+            const dx = 20;
+            const dy = (width - margin.right - margin.left) / 4;
+            const tree = d3.tree().nodeSize([dx, dy]);
             
-            const colorScale = d3.scaleOrdinal()
-                .domain(["POEM", "POETIC_COLLECTION", "MULTI_VERSION_HUB", "OTHER", "AUTHOR"])
-                .range(["#4caf50", "#2196f3", "#9c27b0", "#9e9e9e", "#ff9800"]);
+            root = d3.hierarchy(data, d => d.children);
+            root.x0 = height / 2;
+            root.y0 = 0;
+            
+            root.descendants().forEach((d, index) => {
+                d.id = index;
+                d._children = d.children;
+                if (d.depth > 1) d.children = null;
+            });
+            
+            update(root);
 
-            node.append("circle")
-                .attr("fill", d => d.children ? colorScale(d.data.type) : "#fff")
-                .attr("stroke", d => colorScale(d.data.type))
-                .attr("r", 5)
-                .on("click", (event, d) => {
-                    if (d.children) {
-                        d._children = d.children;
-                        d.children = null;
-                    } else {
-                        d.children = d._children;
-                        d._children = null;
-                    }
-                    console.log("Node clicked, dynamic update not implemented in this simple example.");
-                })
-                .on("mouseover", (event, d) => {
-                    tooltip.transition().duration(200).style("opacity", .9);
-                    tooltip.html(
-                        `<strong>${d.data.name}</strong><br/>` +
-                        `Type: ${d.data.type} (${d.data.reason})<br/>` +
-                        `Timestamp: ${new Date(d.data.timestamp).toLocaleString()}`
-                    )
-                    .style("left", (event.pageX + 15) + "px")
-                    .style("top", (event.pageY - 28) + "px");
-                })
-                .on("mouseout", () => {
-                    tooltip.transition().duration(500).style("opacity", 0);
+            function update(source) {
+                const duration = 250;
+                const nodes = root.descendants().reverse();
+                const links = root.links();
+
+                tree(root);
+
+                let left = root;
+                let right = root;
+                root.eachBefore(node => {
+                    if (node.x < left.x) left = node;
+                    if (node.x > right.x) right = node;
                 });
+                
+                const transition = g.transition().duration(duration);
 
-            node.append("text")
-                .attr("dy", "0.31em")
-                .attr("x", d => d.children ? -8 : 8)
-                .attr("text-anchor", d => d.children ? "end" : "start")
-                .text(d => d.data.name)
-                .clone(true).lower()
-                .attr("stroke", "white");
+                const node = g.selectAll("g.node")
+                    .data(nodes, d => d.id);
+
+                const nodeEnter = node.enter().append("g")
+                    .attr("class", "node")
+                    .attr("transform", d => `translate(${source.y0},${source.x0})`)
+                    .attr("fill-opacity", 0)
+                    .attr("stroke-opacity", 0)
+                    .on("click", (event, d) => {
+                        d.children = d.children ? null : d._children;
+                        update(d);
+                    });
+
+                nodeEnter.append("circle")
+                    .attr("r", 4.5)
+                    .attr("stroke", d => colorScale(d.data.type))
+                    .attr("fill", d => d._children ? colorScale(d.data.type) : "#fff");
+
+                nodeEnter.append("text")
+                    .attr("dy", "0.31em")
+                    .attr("x", d => d._children ? -8 : 8)
+                    .attr("text-anchor", d => d._children ? "end" : "start")
+                    .text(d => d.data.name)
+                    .clone(true).lower()
+                    .attr("stroke-linejoin", "round")
+                    .attr("stroke-width", 3)
+                    .attr("stroke", "#f0f2f5");
+                
+                nodeEnter
+                    .on("mouseover", (event, d) => {
+                        tooltip.transition().duration(200).style("opacity", 1);
+                        tooltip.html(
+                            `<strong>${d.data.name}</strong><br/>` +
+                            `Type: ${d.data.type} (${d.data.reason})<br/>` +
+                            `Timestamp: ${new Date(d.data.timestamp).toLocaleString()}`
+                        )
+                        .style("left", (event.pageX + 15) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                    })
+                    .on("mouseout", () => {
+                        tooltip.transition().duration(500).style("opacity", 0);
+                    });
+
+                node.merge(nodeEnter).transition(transition)
+                    .attr("transform", d => `translate(${d.y},${d.x})`)
+                    .attr("fill-opacity", 1)
+                    .attr("stroke-opacity", 1);
+                
+                node.exit().transition(transition).remove()
+                    .attr("transform", d => `translate(${source.y},${source.x})`)
+                    .attr("fill-opacity", 0)
+                    .attr("stroke-opacity", 0);
+
+                const link = g.selectAll("path.link")
+                    .data(links, d => d.target.id);
+                
+                const linkEnter = link.enter().insert("path", "g")
+                    .attr("class", "link")
+                    .attr("d", d => {
+                        const o = {x: source.x0, y: source.y0};
+                        return d3.linkHorizontal()({source: o, target: o});
+                    });
+
+                link.merge(linkEnter).transition(transition)
+                    .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
+                
+                link.exit().transition(transition).remove()
+                    .attr("d", d => {
+                        const o = {x: source.x, y: source.y};
+                        return d3.linkHorizontal()({source: o, target: o});
+                    });
+
+                root.eachBefore(d => {
+                    d.x0 = d.x;
+                    d.y0 = d.y;
+                });
+            }
         }
     </script>
 </body>

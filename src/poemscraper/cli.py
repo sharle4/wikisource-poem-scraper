@@ -33,8 +33,8 @@ def main_cli():
     parser.add_argument(
         "--workers",
         type=int,
-        default=5,
-        help="Number of concurrent API request workers. Default: 5."
+        default=20,
+        help="Number of concurrent API request workers. Default: 20."
     )
     parser.add_argument(
         "--limit",

@@ -8,9 +8,11 @@ import threading
 from typing import Set
 from datetime import datetime, timezone
 
+import re
 import mwparserfromhell
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from urllib.parse import unquote
 
 from .api_client import WikiAPIClient, get_localized_category_prefix
 from .classifier import PageClassifier, PageType
@@ -186,6 +188,29 @@ class ScraperOrchestrator:
 
                     soup = BeautifulSoup(page_html, "lxml")
                     wikitext = page_data.get("revisions", [{}])[0].get("content", "")
+                    wikicode = mwparserfromhell.parse(wikitext)
+                    
+                    wikitext = page_data.get("revisions", [{}])[0].get("content", "") or ""
+                    m = re.match(r'^\s*#(?:REDIRECT|REDIRECTION)\s*\[\[(.+?)\]\]', wikitext, flags=re.IGNORECASE)
+                    if m :
+                        target = m.group(1)
+                        target = unquote(target.split("|", 1)[0].split("#", 1)[0]).replace("_", " ").strip()
+                        redirect_info = await client.get_page_info_and_redirects([target])
+                        target_pages = redirect_info.get("pages", []) if redirect_info else []
+                        for p in target_pages:
+                            if not p.get("missing"):
+                                page_id = p["pageid"]
+                                break
+                        page_data = await client.get_page_data_by_id(page_id)
+                        wikitext = page_data.get("revisions", [{}])[0].get("content", "") or ""
+                    
+                    page_url = page_data.get("fullurl", "") or f"https://{self.config.lang}.wikisource.org/wiki/{page_data.get('title','').replace(' ', '_')}"
+                    page_html = await client.get_rendered_html(page_id)
+                    if not page_html:
+                        raise PageProcessingError("API did not return rendered HTML.")
+
+                    soup = BeautifulSoup(page_html, "lxml")
+                    page_title = page_data.get('title', page_title)  # met à jour le titre avec la cible
                     wikicode = mwparserfromhell.parse(wikitext)
                     
                     classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)

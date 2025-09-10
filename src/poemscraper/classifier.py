@@ -55,27 +55,25 @@ class PageClassifier:
 
     def _get_page_signals(self) -> dict:
         """Analyse la page une seule fois pour extraire des signaux booléens."""
-        content_area = self.soup.select_one("#mw-content-text .mw-parser-output") or self.soup
         
         is_recueil_cat = "Recueils de poèmes" in self.categories
         is_multiversion_cat = "Éditions multiples" in self.categories
-        
+
+        has_donnees_structurees = bool(self.soup.find("a", title=re.compile(r"^d:Q\d+$")))
+        has_editions_header = bool(self.soup.find(["h2", "h3"], string=re.compile(r"Éditions", re.I)))
+
+        has_ws_summary = bool(self.soup.select_one("div.ws-summary"))
+        has_toc = bool(self.soup.find("div", id="toc"))
         has_poem_structure = PoemParser.extract_poem_structure(self.soup) is not None
-        has_ws_summary = bool(content_area.select_one("div.ws-summary"))
-        has_toc = bool(content_area.select_one("div#toc"))
-        has_editions_header = bool(content_area.find(["h2", "h3"], string=re.compile(r"^\s*Éditions\s*$", re.I)))
-        
-        links_in_lists = content_area.select('#mw-content-text li a[href^="/wiki/"], #mw-content-text .tableItem a[href^="/wiki/"]')
-        has_significant_links_in_lists = len(links_in_lists) > 3
 
         return {
             "is_recueil_cat": is_recueil_cat,
             "is_multiversion_cat": is_multiversion_cat,
-            "has_poem_structure": has_poem_structure,
+            "has_donnees_structurees": has_donnees_structurees,
+            "has_editions_header": has_editions_header,
             "has_ws_summary": has_ws_summary,
             "has_toc": has_toc,
-            "has_editions_header": has_editions_header,
-            "has_significant_links_in_lists": has_significant_links_in_lists,
+            "has_poem_structure": has_poem_structure,
         }
 
     def classify(self) -> Tuple[PageType, str]:
@@ -87,24 +85,23 @@ class PageClassifier:
         
         signals = self._get_page_signals()
 
-        if signals["is_multiversion_cat"]:
-            return PageType.MULTI_VERSION_HUB, "is_multiversion_cat"
         if signals["is_recueil_cat"]:
             return PageType.POETIC_COLLECTION, "is_recueil_cat"
+        if signals["is_multiversion_cat"]:
+            return PageType.MULTI_VERSION_HUB, "is_multiversion_cat"
+        
+        for key in ("has_ws_summary", "has_toc", "has_editions_header"):
+            if signals[key]:
+                if signals["has_donnees_structurees"]:
+                    return PageType.MULTI_VERSION_HUB, f"has_donnees_structurees and {key}"
+                return PageType.POETIC_COLLECTION, key
 
-        if signals["has_editions_header"]:
-             return PageType.MULTI_VERSION_HUB, "has_editions_header"
-
-        if signals["has_ws_summary"] or signals["has_toc"]:
-            reason = "has_ws_summary" if signals["has_ws_summary"] else "has_toc"
-            return PageType.POETIC_COLLECTION, reason
-            
         if signals["has_poem_structure"]:
             return PageType.POEM, "has_poem_structure"
 
-        if signals["has_significant_links_in_lists"]:
-            return PageType.POETIC_COLLECTION, "has_significant_links_in_lists"
-
+        if signals["has_donnees_structurees"] and self.soup.select("ul > li"):
+            return PageType.MULTI_VERSION_HUB, "has_donnees_structurees and has_list_items"
+            
         return PageType.OTHER, "no_signals_matched"
 
     def extract_sub_page_titles(self) -> Set[str]:

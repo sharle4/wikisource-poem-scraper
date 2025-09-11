@@ -135,7 +135,9 @@ class PageClassifier:
 
             is_a_version = False
             
-            if normalized_self_title in link_title:
+            normalized_link_title = re.sub(r"\s*\([^)]*\)", "", link_title or "")
+            normalized_link_title = re.sub(r"\s+", " ", normalized_link_title).strip().lower()
+            if normalized_self_title in normalized_link_title:
                 is_a_version = True
             
             else:

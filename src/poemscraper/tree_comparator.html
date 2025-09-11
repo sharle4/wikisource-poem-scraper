@@ -99,6 +99,10 @@
         </div>
         <div class="button-container">
             <button id="compare-btn" disabled>Comparer</button>
+            <label style="margin-left:12px; font-size:0.95em;">
+                <input type="checkbox" id="sort-last-segment">
+                Trier A→Z sur le dernier segment “/” (Ajoutés/Supprimés)
+            </label>
         </div>
         <div id="results" class="results-section">
             <details id="summary-details" open>
@@ -129,8 +133,10 @@
         const dropZones = [document.getElementById('drop-zone-1'), document.getElementById('drop-zone-2')];
         const compareBtn = document.getElementById('compare-btn');
         const resultsSection = document.getElementById('results');
+    const sortLastSegmentCheckbox = document.getElementById('sort-last-segment');
         const files = [null, null];
         const fileData = [null, null];
+    let lastComparison = null;
 
         dropZones.forEach((zone, index) => {
             const input = zone.querySelector('.file-input');
@@ -176,9 +182,19 @@
             const treeA = flattenTree(fileData[0]);
             const treeB = flattenTree(fileData[1]);
             const comparison = compareTrees(treeA, treeB);
+            lastComparison = comparison;
             displayResults(comparison);
             resultsSection.style.display = 'block';
         });
+
+        // Re-affiche avec le nouveau tri si l'utilisateur coche/décoche après comparaison
+        if (sortLastSegmentCheckbox) {
+            sortLastSegmentCheckbox.addEventListener('change', () => {
+                if (lastComparison) {
+                    displayResults(lastComparison);
+                }
+            });
+        }
 
         function flattenTree(root) {
             const map = new Map();
@@ -227,8 +243,15 @@
             return results;
         }
 
+        function lastSegment(name) {
+            const s = String(name || '');
+            const idx = s.lastIndexOf('/');
+            return (idx >= 0 ? s.slice(idx + 1) : s).trim();
+        }
+
         function displayResults(comparison) {
             const { added, removed, modified } = comparison;
+            const useLast = !!(sortLastSegmentCheckbox && sortLastSegmentCheckbox.checked);
 
             document.getElementById('summary-list').innerHTML = `
                 <li><span class="badge added">Ajouté</span> ${added.length} page(s)</li>
@@ -241,12 +264,20 @@
             document.querySelector('#modified-details summary').innerHTML = `Pages Modifiées <span class="count">(${modified.length})</span>`;
 
             const addedList = document.getElementById('added-list');
-            addedList.innerHTML = added.map(item => `<li><div class="diff-item"><span class="badge added">AJOUTÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${item.node.name}</a></div></li>`).join('');
+            const addedItems = useLast ? [...added].sort((a, b) => lastSegment(a.node.name).localeCompare(lastSegment(b.node.name), 'fr', { sensitivity: 'base' })) : added;
+            addedList.innerHTML = addedItems.map(item => {
+                const label = useLast ? lastSegment(item.node.name) : item.node.name;
+                return `<li><div class="diff-item"><span class="badge added">AJOUTÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${label}</a></div></li>`;
+            }).join('');
             document.getElementById('added-details').style.display = added.length > 0 ? 'block' : 'none';
             if (added.length > 0) document.getElementById('added-details').open = true;
 
             const removedList = document.getElementById('removed-list');
-            removedList.innerHTML = removed.map(item => `<li><div class="diff-item"><span class="badge removed">SUPPRIMÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${item.node.name}</a></div></li>`).join('');
+            const removedItems = useLast ? [...removed].sort((a, b) => lastSegment(a.node.name).localeCompare(lastSegment(b.node.name), 'fr', { sensitivity: 'base' })) : removed;
+            removedList.innerHTML = removedItems.map(item => {
+                const label = useLast ? lastSegment(item.node.name) : item.node.name;
+                return `<li><div class="diff-item"><span class="badge removed">SUPPRIMÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${label}</a></div></li>`;
+            }).join('');
              document.getElementById('removed-details').style.display = removed.length > 0 ? 'block' : 'none';
              if (removed.length > 0) document.getElementById('removed-details').open = true;
 

@@ -104,33 +104,80 @@ class PageClassifier:
             
         return PageType.OTHER, "no_signals_matched"
 
-    def extract_sub_page_titles(self) -> Set[str]:
+    def extract_hub_sub_pages(self) -> Set[str]:
         """
-        Extrait les titres des sous-pages (poèmes, éditions) de manière robuste.
-        Cette méthode utilise plusieurs stratégies pour trouver les liens pertinents.
+        Extrait les titres des sous-pages pour un MULTI_VERSION_HUB.
+        Cette stratégie recherche les liens dont l'attribut 'title' commence par le titre de la page hub,
+        une heuristique fiable pour trouver différentes versions/traductions d'une même œuvre.
+        """
+        titles: Set[str] = set()
+        content_area = self.soup.select_one("#mw-content-text .mw-parser-output")
+        if not content_area:
+            logger.warning(f"'{self.title}': Impossible de trouver la zone de contenu principal pour le hub.")
+            return titles
+
+        author_prefix = get_localized_prefix(self.lang, "author")
+        category_prefix = get_localized_prefix(self.lang, "category")
+        
+        links = content_area.select('a[href]')
+
+        for link in links:
+            href = link.get("href", "")
+            
+            if not href or not href.startswith("/wiki/"):
+                continue
+
+            if any(
+                href.startswith(f"/wiki/{prefix}:")
+                for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial", "Livre"]
+            ) or "action=edit" in href:
+                continue
+
+            link_title_attr = link.get('title', '')
+            
+            if link_title_attr.startswith(self.title) and link_title_attr != self.title:
+                titles.add(link_title_attr)
+                continue
+
+            try:
+                path = href.split("wiki/", 1)[1]
+                raw_title = path.split("#", 1)[0]
+                decoded_title = unquote(raw_title).replace("_", " ")
+                if decoded_title.startswith(self.title + "/") and decoded_title != self.title:
+                    titles.add(decoded_title)
+            except Exception:
+                continue
+                
+        logger.info(f"Extrait {len(titles)} titres de version depuis la page hub '{self.title}'.")
+        return titles
+
+    def extract_collection_sub_pages(self) -> Set[str]:
+        """
+        Extrait les titres des sous-pages (poèmes, éditions) pour une POETIC_COLLECTION.
+        Cette méthode utilise des stratégies basées sur la structure (TOC, en-têtes).
         """
         toc_element = self.soup.select_one("div.ws-summary, div#toc, div.ws_summary")
         if toc_element:
             logger.debug(f"'{self.title}': Élément TOC trouvé. Extraction des liens.")
-            return self._extract_links_from_element(toc_element)
+            return self._extract_links_from_collection_element(toc_element)
 
         editions_header = self.soup.find(["h2", "h3"], string=re.compile(r"^\s*Éditions\s*$", re.I))
         if editions_header:
             next_element = editions_header.find_next_sibling()
             if next_element and next_element.name in ['ul', 'ol', 'dl']:
                 logger.debug(f"'{self.title}': En-tête 'Éditions' trouvé. Extraction des liens de la liste suivante.")
-                return self._extract_links_from_element(next_element, check_title_attr=True)
+                return self._extract_links_from_collection_element(next_element, check_title_attr=True)
 
         content_area = self.soup.select_one("#mw-content-text .mw-parser-output")
         if content_area:
             logger.debug(f"'{self.title}': Aucun conteneur spécifique trouvé. Recherche dans toutes les listes de #mw-content-text.")
-            return self._extract_links_from_element(content_area)
+            return self._extract_links_from_collection_element(content_area)
             
         return set()
 
-    def _extract_links_from_element(self, element: Tag, check_title_attr: bool = False) -> Set[str]:
+    def _extract_links_from_collection_element(self, element: Tag, check_title_attr: bool = False) -> Set[str]:
         """
-        Factorisation de l'extraction de liens depuis un élément BeautifulSoup.
+        Factorisation de l'extraction de liens depuis un élément BeautifulSoup pour une collection.
         Extrait les liens internes valides depuis des structures de listes (<li>) ou des tables des matières (div.tableItem).
         """
         titles: Set[str] = set()
@@ -167,5 +214,5 @@ class PageClassifier:
             except Exception as e:
                 logger.warning(f"Impossible d'extraire le titre de l'URL '{href}': {e}")
                 
-        logger.info(f"Extrait {len(titles)} titres de sous-pages de '{self.title}'.")
+        logger.info(f"Extrait {len(titles)} titres de sous-pages de la collection '{self.title}'.")
         return titles

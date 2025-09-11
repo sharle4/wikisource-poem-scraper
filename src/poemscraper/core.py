@@ -210,7 +210,7 @@ class ScraperOrchestrator:
                         raise PageProcessingError("API did not return rendered HTML.")
 
                     soup = BeautifulSoup(page_html, "lxml")
-                    page_title = page_data.get('title', page_title)  # met à jour le titre avec la cible
+                    page_title = page_data.get('title', page_title)
                     wikicode = mwparserfromhell.parse(wikitext)
                     
                     classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
@@ -227,16 +227,20 @@ class ScraperOrchestrator:
                             logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
                             self.skipped_counter += 1
                     
-                    elif page_type in [PageType.POETIC_COLLECTION, PageType.MULTI_VERSION_HUB]:
-                        logger.info(f"Page '{page_title}' is a {page_type.name} ({classification_reason}). Extracting and enqueuing sub-pages.")
-                        sub_titles = classifier.extract_sub_page_titles()
+                    elif page_type == PageType.POETIC_COLLECTION:
+                        logger.info(f"Page '{page_title}' is a POETIC_COLLECTION ({classification_reason}). Extracting sub-pages.")
+                        sub_titles = classifier.extract_collection_sub_pages()
                         children_count = len(sub_titles)
-                        
-                        if page_type == PageType.POETIC_COLLECTION:
-                            self.log_manager.log_collection(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
-                        else: # MULTI_VERSION_HUB
-                            self.log_manager.log_hub(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
+                        self.log_manager.log_collection(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
+                        if sub_titles:
+                            await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
+                        self.skipped_counter += 1
 
+                    elif page_type == PageType.MULTI_VERSION_HUB:
+                        logger.info(f"Page '{page_title}' is a MULTI_VERSION_HUB ({classification_reason}). Extracting sub-pages.")
+                        sub_titles = classifier.extract_hub_sub_pages()
+                        children_count = len(sub_titles)
+                        self.log_manager.log_hub(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
                         if sub_titles:
                             await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
                         self.skipped_counter += 1

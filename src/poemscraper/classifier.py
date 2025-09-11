@@ -106,47 +106,46 @@ class PageClassifier:
 
     def extract_hub_sub_pages(self) -> Set[str]:
         """
-        Extrait les titres des sous-pages pour un MULTI_VERSION_HUB.
-        Cette stratégie recherche les liens dont l'attribut 'title' commence par le titre de la page hub,
-        une heuristique fiable pour trouver différentes versions/traductions d'une même œuvre.
+        Extrait les titres des sous-pages pour un MULTI_VERSION_HUB de manière exhaustive et fiable.
         """
         titles: Set[str] = set()
-        content_area = self.soup.select_one("#mw-content-text .mw-parser-output")
-        if not content_area:
-            logger.warning(f"'{self.title}': Impossible de trouver la zone de contenu principal pour le hub.")
-            return titles
-
+        
         author_prefix = get_localized_prefix(self.lang, "author")
         category_prefix = get_localized_prefix(self.lang, "category")
-        
-        links = content_area.select('a[href]')
+        internal_prefixes_to_ignore = [
+            category_prefix, author_prefix, "Portail", "Aide", "Wikisource", 
+            "Fichier", "Spécial", "Livre", "Discussion", "Modèle"
+        ]
+
+        links = self.soup.select('a[href][title]')
 
         for link in links:
             href = link.get("href", "")
+            link_title = link.get('title', '')
+
+            if not href.startswith("/wiki/") or link_title == self.title:
+                continue
             
-            if not href or not href.startswith("/wiki/"):
+            if any(link_title.startswith(f"{prefix}:") for prefix in internal_prefixes_to_ignore) or \
+               "action=edit" in href or "&redlink=1" in href:
                 continue
 
-            if any(
-                href.startswith(f"/wiki/{prefix}:")
-                for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial", "Livre"]
-            ) or "action=edit" in href:
-                continue
-
-            link_title_attr = link.get('title', '')
+            is_a_version = False
             
-            if link_title_attr.startswith(self.title) and link_title_attr != self.title:
-                titles.add(link_title_attr)
-                continue
-
-            try:
-                path = href.split("wiki/", 1)[1]
-                raw_title = path.split("#", 1)[0]
-                decoded_title = unquote(raw_title).replace("_", " ")
-                if decoded_title.startswith(self.title + "/") and decoded_title != self.title:
-                    titles.add(decoded_title)
-            except Exception:
-                continue
+            if self.title in link_title:
+                is_a_version = True
+            
+            else:
+                try:
+                    path = href.split("wiki/", 1)[1]
+                    decoded_title_from_href = unquote(path.split("#", 1)[0]).replace("_", " ")
+                    if decoded_title_from_href.startswith(self.title + "/"):
+                        is_a_version = True
+                except IndexError:
+                    continue
+            
+            if is_a_version:
+                titles.add(link_title)
                 
         logger.info(f"Extrait {len(titles)} titres de version depuis la page hub '{self.title}'.")
         return titles
@@ -166,16 +165,14 @@ class PageClassifier:
             next_element = editions_header.find_next_sibling()
             if next_element and next_element.name in ['ul', 'ol', 'dl']:
                 logger.debug(f"'{self.title}': En-tête 'Éditions' trouvé. Extraction des liens de la liste suivante.")
-                return self._extract_links_from_collection_element(next_element, check_title_attr=True)
+                return self._extract_links_from_collection_element(next_element)
 
-        content_area = self.soup.select_one("#mw-content-text .mw-parser-output")
-        if content_area:
-            logger.debug(f"'{self.title}': Aucun conteneur spécifique trouvé. Recherche dans toutes les listes de #mw-content-text.")
-            return self._extract_links_from_collection_element(content_area)
+        content_area = self.soup.select_one(".mw-parser-output") or self.soup
+        logger.debug(f"'{self.title}': Aucun conteneur spécifique trouvé. Recherche dans toutes les listes de la zone de contenu.")
+        return self._extract_links_from_collection_element(content_area)
             
-        return set()
 
-    def _extract_links_from_collection_element(self, element: Tag, check_title_attr: bool = False) -> Set[str]:
+    def _extract_links_from_collection_element(self, element: Tag) -> Set[str]:
         """
         Factorisation de l'extraction de liens depuis un élément BeautifulSoup pour une collection.
         Extrait les liens internes valides depuis des structures de listes (<li>) ou des tables des matières (div.tableItem).
@@ -195,22 +192,24 @@ class PageClassifier:
             if not href or not href.startswith("/wiki/"):
                 continue
 
-            if any(
-                href.startswith(f"/wiki/{prefix}:")
-                for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial", "Livre"]
-            ) or "action=edit" in href:
-                continue
-
-            link_title_attr = link.get('title', '')
-            if check_title_attr and self.title not in link_title_attr:
-                continue
-
+            link_title = link.get('title', '')
+            
             try:
-                path = href.split("wiki/", 1)[1]
-                raw_title = path.split("#", 1)[0]
-                title = unquote(raw_title).replace("_", " ")
-                if title and title != self.title:
-                    titles.add(title)
+                if not link_title:
+                    path = href.split("wiki/", 1)[1]
+                    raw_title = path.split("#", 1)[0]
+                    link_title = unquote(raw_title).replace("_", " ")
+
+                if not link_title or link_title == self.title:
+                    continue
+
+                if any(
+                    link_title.startswith(f"{prefix}:")
+                    for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial", "Livre"]
+                ) or "action=edit" in href:
+                    continue
+
+                titles.add(link_title)
             except Exception as e:
                 logger.warning(f"Impossible d'extraire le titre de l'URL '{href}': {e}")
                 

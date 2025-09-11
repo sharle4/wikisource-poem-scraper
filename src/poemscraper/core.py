@@ -20,6 +20,7 @@ from .database import DatabaseManager, connect_sync_db
 from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
 from .schemas import PoemSchema
+from .clean_titles import clean_title
 from .tree_logger import HierarchicalLogger
 from .log_manager import LogManager
 
@@ -32,9 +33,11 @@ class ScraperOrchestrator:
         self.config = config
         self.log_manager = log_manager
         self.api_endpoint = f"https://{config.lang}.wikisource.org/w/api.php"
+        self.write_cleaned = str(getattr(config, "cleaned", "true")).lower() == "true"
 
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
         self.output_file = self.config.output_dir / "poems.jsonl.gz"
+        self.cleaned_output_file = self.config.output_dir / "poems.cleaned.jsonl.gz"
         self.db_path = self.config.output_dir / "poems_index.sqlite"
 
         self.db_manager = DatabaseManager(self.db_path)
@@ -45,11 +48,12 @@ class ScraperOrchestrator:
             tree_log_dir = self.config.output_dir / "logs" / "tree-logs"
             self.tree_logger = HierarchicalLogger(tree_log_dir)
             logger.info(f"Hierarchical tree logging enabled. Logs will be saved to {tree_log_dir}")
+        if self.write_cleaned:
+            logger.info(f"Cleaned output enabled. A second file will be written to: {self.cleaned_output_file}")
 
         self.processed_ids: Set[int] = set()
         self.processed_counter = 0
         self.skipped_counter = 0
-        # Network/backoff parameters
         self._net_timeout_seconds = 25
         self._net_retries = 2
         self._backoff_base = 0.5
@@ -65,7 +69,6 @@ class ScraperOrchestrator:
             self.processed_ids = await self.db_manager.get_all_processed_ids()
             logger.info(f"Resume mode: Loaded {len(self.processed_ids)} already processed page IDs.")
 
-        # Unbounded queue prevents deadlocks when consumers enqueue many child pages
         page_queue = asyncio.Queue()
         writer_sync_queue = queue.Queue(maxsize=self.config.workers * 2)
 
@@ -243,7 +246,7 @@ class ScraperOrchestrator:
                             await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
                         self.skipped_counter += 1
                     
-                    else: # OTHER
+                    else:
                         logger.debug(f"Skipping page '{page_title}' classified as {page_type.name} ({classification_reason}).")
                         self.log_manager.log_other(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason)
                         self.skipped_counter += 1
@@ -312,6 +315,9 @@ class ScraperOrchestrator:
     def _sync_writer(self, writer_queue: queue.Queue):
         """Tâche synchrone pour gérer toutes les E/S disque."""
         db_conn, db_cursor = connect_sync_db(self.db_path)
+        cleaned_fp = None
+        if self.write_cleaned:
+            cleaned_fp = gzip.open(self.cleaned_output_file, "at", encoding='utf-8')
         with gzip.open(self.output_file, "at", encoding='utf-8') as f_gz:
             while True:
                 result = writer_queue.get()
@@ -320,13 +326,24 @@ class ScraperOrchestrator:
                     break
                 try:
                     if isinstance(result, PoemSchema):
-                        f_gz.write(result.model_dump_json() + "\n")
+                        json_str = result.model_dump_json()
+                        f_gz.write(json_str + "\n")
+                        if cleaned_fp is not None:
+                            data = result.model_dump()
+                            if "title" in data:
+                                data["title"] = clean_title(data["title"])
+                            cleaned_fp.write(json.dumps(data, ensure_ascii=False) + "\n")
                         self.db_manager.add_poem_index_sync(result, db_cursor)
                         self.processed_counter += 1
                 except Exception as e:
                     logger.error(f"Writer thread failed to persist a record: {e}")
                 finally:
                     writer_queue.task_done()
+        if cleaned_fp is not None:
+            try:
+                cleaned_fp.close()
+            except Exception:
+                pass
         
         db_conn.commit()
         db_conn.close()

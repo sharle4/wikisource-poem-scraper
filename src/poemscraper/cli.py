@@ -65,6 +65,14 @@ def main_cli():
         help="Generate detailed exploration tree logs for each author in the output 'logs' directory."
     )
     
+    parser.add_argument(
+        "--cleaned",
+        type=str,
+        default="true",
+        choices=["true", "false"],
+        help="Write an additional cleaned JSONL.GZ (true|false). Default: true."
+    )
+    
     args = parser.parse_args()
     
     log_level = logging.DEBUG if args.verbose else logging.INFO

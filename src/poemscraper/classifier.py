@@ -1,14 +1,13 @@
 import logging
 import re
 from enum import Enum, auto
-from typing import Set, Tuple, Optional
+from typing import Set, Tuple
 from urllib.parse import unquote
 
 import mwparserfromhell
 from bs4 import BeautifulSoup, Tag
 
 from .parsing import PoemParser
-from .log_manager import LogManager
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +42,16 @@ class PageClassifier:
         soup: BeautifulSoup,
         lang: str,
         wikicode: mwparserfromhell.wikicode.Wikicode,
-        log_manager: Optional[LogManager] = None,
     ):
         self.page_data = page_data
         self.soup = soup
         self.lang = lang
         self.wikicode = wikicode
         self.title = page_data.get("title", "")
-        self.page_id = page_data.get("pageid", 0)
         self.ns = page_data.get("ns", -1)
         self.categories = {
             c["title"].split(":")[-1] for c in page_data.get("categories", [])
         }
-        self.log_manager = log_manager
 
     def _get_page_signals(self) -> dict:
         """Analyse la page une seule fois pour extraire des signaux booléens."""
@@ -111,83 +107,48 @@ class PageClassifier:
     def extract_hub_sub_pages(self) -> Set[str]:
         """
         Extrait les titres des sous-pages pour un MULTI_VERSION_HUB.
-        Cette fonction emploie une stratégie à plusieurs niveaux pour identifier de manière robuste
-        les liens vers différentes éditions ou versions d'une même œuvre sur une page hub.
+        Cette stratégie recherche les liens dont l'attribut 'title' commence par le titre de la page hub,
+        une heuristique fiable pour trouver différentes versions/traductions d'une même œuvre.
         """
         titles: Set[str] = set()
-        
         content_area = self.soup.select_one("#mw-content-text .mw-parser-output")
         if not content_area:
-            logger.debug(f"'{self.title}': Le sélecteur strict a échoué. Tentative avec le sélecteur de fallback '.mw-parser-output'.")
-            content_area = self.soup.select_one(".mw-parser-output")
-
-        if not content_area:
-            logger.warning(
-                f"'{self.title}': Impossible de trouver la zone de contenu principal, même avec le fallback. La structure HTML est atypique."
-            )
-            if self.log_manager:
-                self.log_manager.log_debug_html(self.title, self.page_id, self.soup.prettify())
+            logger.warning(f"'{self.title}': Impossible de trouver la zone de contenu principal pour le hub.")
             return titles
-
-        search_scope = None
-        
-        homonymy_box = content_area.select_one("#homonymie-editions, .homonymie")
-        if homonymy_box:
-            logger.debug(f"'{self.title}': Stratégie de hub 3a - Boîte d'homonymie trouvée.")
-            search_scope = homonymy_box
-
-        if not search_scope:
-            editions_header = content_area.find(["h2", "h3"], string=re.compile(r"^\s*Éditions\s*$", re.I))
-            if editions_header:
-                next_element = editions_header.find_next_sibling()
-                if next_element and next_element.name in ['ul', 'ol', 'dl']:
-                    logger.debug(f"'{self.title}': Stratégie de hub 3b - Liste sous en-tête 'Éditions' trouvée.")
-                    search_scope = next_element
-        
-        if not search_scope:
-            logger.debug(f"'{self.title}': Aucune portée ciblée trouvée. Passage à la recherche globale sur le contenu.")
-            search_scope = content_area
 
         author_prefix = get_localized_prefix(self.lang, "author")
         category_prefix = get_localized_prefix(self.lang, "category")
-        ignored_prefixes = [
-            f"/wiki/{p}:" for p in [
-                category_prefix, author_prefix, "Portail", "Aide", 
-                "Wikisource", "Fichier", "Spécial", "Livre", "Modèle"
-            ]
-        ]
+        
+        links = content_area.select('a[href]')
 
-        for link in search_scope.select('a[href]'):
+        for link in links:
             href = link.get("href", "")
             
-            if not href.startswith("/wiki/"):
+            if not href or not href.startswith("/wiki/"):
                 continue
-            
-            if any(href.startswith(prefix) for prefix in ignored_prefixes):
+
+            if any(
+                href.startswith(f"/wiki/{prefix}:")
+                for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial", "Livre"]
+            ) or "action=edit" in href:
                 continue
+
+            link_title_attr = link.get('title', '')
             
-            if "action=edit" in href or "redlink=1" in href:
+            if link_title_attr.startswith(self.title) and link_title_attr != self.title:
+                titles.add(link_title_attr)
                 continue
 
             try:
                 path = href.split("wiki/", 1)[1]
                 raw_title = path.split("#", 1)[0]
-                decoded_title = unquote(raw_title).replace("_", " ").strip()
-
-                if decoded_title and decoded_title != self.title and self.title in decoded_title:
+                decoded_title = unquote(raw_title).replace("_", " ")
+                if decoded_title.startswith(self.title + "/") and decoded_title != self.title:
                     titles.add(decoded_title)
-            
-            except IndexError:
-                continue
-            except Exception as e:
-                logger.warning(f"Impossible de parser le lien '{href}' sur la page '{self.title}': {e}", exc_info=False)
+            except Exception:
                 continue
                 
-        if titles:
-            logger.info(f"Extraction réussie de {len(titles)} titres de version depuis le hub '{self.title}'.")
-        else:
-            logger.warning(f"Aucun titre de version trouvé pour le hub '{self.title}'. La structure de la page est peut-être atypique.")
-            
+        logger.info(f"Extrait {len(titles)} titres de version depuis la page hub '{self.title}'.")
         return titles
 
     def extract_collection_sub_pages(self) -> Set[str]:

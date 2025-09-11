@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparateur d'Arbres d'Exploration</title>
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --text-color: #333;
+            --header-bg: #fff;
+            --border-color: #dee2e6;
+            --link-color: #0d6efd;
+            --added-bg: #e6ffed;
+            --added-text: #28a745;
+            --removed-bg: #ffeef0;
+            --removed-text: #dc3545;
+            --modified-bg: #fff3cd;
+            --modified-text: #ffc107;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+        .container { max-width: 1200px; margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #212529; }
+        .drop-zones { display: flex; gap: 20px; margin-bottom: 20px; }
+        .drop-zone {
+            flex: 1;
+            padding: 40px 20px;
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            text-align: center;
+            color: #6c757d;
+            font-size: 1.1em;
+            transition: all 0.2s ease-in-out;
+        }
+        .drop-zone.drag-over { border-color: var(--link-color); background-color: #e9ecef; }
+        .drop-zone.loaded { border-color: var(--added-text); background-color: var(--added-bg); }
+        .drop-zone strong { color: #333; }
+        .button-container { text-align: center; margin-bottom: 20px; }
+        button {
+            padding: 10px 20px;
+            font-size: 1.1em;
+            cursor: pointer;
+            border-radius: 5px;
+            background-color: var(--link-color);
+            color: white;
+            border: none;
+            opacity: 0.5;
+        }
+        button:not(:disabled) { opacity: 1; }
+        .results-section {
+            border-top: 1px solid var(--border-color);
+            padding-top: 20px;
+            display: none;
+        }
+        details { border: 1px solid var(--border-color); border-radius: 5px; margin-bottom: 10px; }
+        summary {
+            padding: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: #f8f9fa;
+        }
+        .diff-list { list-style-type: none; padding: 0 15px 15px 15px; margin: 0; }
+        .diff-list li { padding: 8px 0; border-bottom: 1px solid var(--border-color); }
+        .diff-list li:last-child { border-bottom: none; }
+        .diff-item { display: flex; align-items: center; gap: 10px; }
+        .badge { padding: 3px 8px; border-radius: 4px; font-size: 0.8em; font-weight: 600; }
+        .badge.added { background-color: var(--added-text); color: white; }
+        .badge.removed { background-color: var(--removed-text); color: white; }
+        .badge.modified { background-color: var(--modified-text); color: #212529; }
+        .change-details { margin-left: 20px; font-size: 0.9em; color: #495057; }
+        .change-details strong { color: #212529; }
+        a { color: var(--link-color); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Comparateur d'Arbres Wikisource</h1>
+        <div class="drop-zones">
+            <div id="drop-zone-1" class="drop-zone"><p>Déposez le fichier JSON <strong>A (Ancien)</strong> ici ou cliquez pour choisir</p><input type="file" class="file-input" style="display: none;"></div>
+            <div id="drop-zone-2" class="drop-zone"><p>Déposez le fichier JSON <strong>B (Nouveau)</strong> ici ou cliquez pour choisir</p><input type="file" class="file-input" style="display: none;"></div>
+        </div>
+        <div class="button-container">
+            <button id="compare-btn" disabled>Comparer</button>
+        </div>
+        <div id="results" class="results-section">
+            <details id="summary-details" open><summary>Résumé de la Comparaison</summary><ul id="summary-list" class="diff-list"></ul></details>
+            <details id="added-details"><summary>Pages Ajoutées</summary><ul id="added-list" class="diff-list"></ul></details>
+            <details id="removed-details"><summary>Pages Supprimées</summary><ul id="removed-list" class="diff-list"></ul></details>
+            <details id="modified-details"><summary>Pages Modifiées</summary><ul id="modified-list" class="diff-list"></ul></details>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const dropZones = [document.getElementById('drop-zone-1'), document.getElementById('drop-zone-2')];
+        const compareBtn = document.getElementById('compare-btn');
+        const resultsSection = document.getElementById('results');
+        const files = [null, null];
+        const fileData = [null, null];
+
+        dropZones.forEach((zone, index) => {
+            const input = zone.querySelector('.file-input');
+            zone.addEventListener('click', () => input.click());
+            input.addEventListener('change', (e) => handleFile(e.target.files[0], index));
+            
+            zone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                zone.classList.add('drag-over');
+            });
+            zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('drag-over');
+                handleFile(e.dataTransfer.files[0], index);
+            });
+        });
+
+        function handleFile(file, index) {
+            if (!file || !file.type.match('application/json')) {
+                alert("Veuillez utiliser un fichier JSON valide.");
+                return;
+            }
+            files[index] = file;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    fileData[index] = JSON.parse(e.target.result);
+                    dropZones[index].classList.add('loaded');
+                    dropZones[index].querySelector('p').innerHTML = `<strong>Fichier chargé :</strong> ${file.name}`;
+                    if (files[0] && files[1]) {
+                        compareBtn.disabled = false;
+                    }
+                } catch (error) {
+                    alert(`Erreur de parsing du JSON: ${error.message}`);
+                    dropZones[index].classList.remove('loaded');
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        compareBtn.addEventListener('click', () => {
+            const treeA = flattenTree(fileData[0]);
+            const treeB = flattenTree(fileData[1]);
+            const comparison = compareTrees(treeA, treeB);
+            displayResults(comparison);
+            resultsSection.style.display = 'block';
+        });
+
+        function flattenTree(root) {
+            const map = new Map();
+            function traverse(node) {
+                if (!node || !node.name) return;
+                const childrenNames = (node.children || []).map(c => c.name);
+                map.set(node.name, { ...node, children: new Set(childrenNames) });
+                if (node.children) {
+                    node.children.forEach(traverse);
+                }
+            }
+            traverse(root);
+            return map;
+        }
+
+        function compareTrees(treeA, treeB) {
+            const allKeys = new Set([...treeA.keys(), ...treeB.keys()]);
+            const results = { added: [], removed: [], modified: [] };
+
+            for (const key of allKeys) {
+                const nodeA = treeA.get(key);
+                const nodeB = treeB.get(key);
+
+                if (!nodeA) {
+                    results.added.push({ node: nodeB });
+                } else if (!nodeB) {
+                    results.removed.push({ node: nodeA });
+                } else {
+                    const modifications = [];
+                    if (nodeA.type !== nodeB.type) {
+                        modifications.push({ type: 'category', from: nodeA.type, to: nodeB.type });
+                    }
+                    
+                    const childrenAdded = [...nodeB.children].filter(c => !nodeA.children.has(c));
+                    const childrenRemoved = [...nodeA.children].filter(c => !nodeB.children.has(c));
+
+                    if (childrenAdded.length > 0 || childrenRemoved.length > 0) {
+                        modifications.push({ type: 'children', added: childrenAdded, removed: childrenRemoved });
+                    }
+                    
+                    if (modifications.length > 0) {
+                        results.modified.push({ name: key, nodeA, nodeB, modifications });
+                    }
+                }
+            }
+            return results;
+        }
+
+        function displayResults(comparison) {
+            const { added, removed, modified } = comparison;
+
+            document.getElementById('summary-list').innerHTML = `
+                <li><span class="badge added">Ajouté</span> ${added.length} page(s)</li>
+                <li><span class="badge removed">Supprimé</span> ${removed.length} page(s)</li>
+                <li><span class="badge modified">Modifié</span> ${modified.length} page(s)</li>
+            `;
+
+            const addedList = document.getElementById('added-list');
+            addedList.innerHTML = added.map(item => `<li><div class="diff-item"><span class="badge added">AJOUTÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${item.node.name}</a></div></li>`).join('');
+            document.getElementById('added-details').style.display = added.length > 0 ? 'block' : 'none';
+
+            const removedList = document.getElementById('removed-list');
+            removedList.innerHTML = removed.map(item => `<li><div class="diff-item"><span class="badge removed">SUPPRIMÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${item.node.name}</a></div></li>`).join('');
+             document.getElementById('removed-details').style.display = removed.length > 0 ? 'block' : 'none';
+
+            const modifiedList = document.getElementById('modified-list');
+            modifiedList.innerHTML = modified.map(item => {
+                const details = item.modifications.map(mod => {
+                    if (mod.type === 'category') {
+                        return `<li><strong>Catégorie changée :</strong> de <code>${mod.from}</code> à <code>${mod.to}</code></li>`;
+                    }
+                    if (mod.type === 'children') {
+                        let html = '';
+                        if(mod.added.length > 0) html += `<li><strong>Enfants ajoutés (${mod.added.length}):</strong> ${mod.added.map(c => `<a href="${buildUrl(c)}" target="_blank">${c}</a>`).join(', ')}</li>`;
+                        if(mod.removed.length > 0) html += `<li><strong>Enfants supprimés (${mod.removed.length}):</strong> ${mod.removed.map(c => `<a href="${buildUrl(c)}" target="_blank">${c}</a>`).join(', ')}</li>`;
+                        return html;
+                    }
+                }).join('');
+                return `<li>
+                    <div class="diff-item"><span class="badge modified">MODIFIÉ</span><a href="${buildUrl(item.name)}" target="_blank">${item.name}</a></div>
+                    <ul class="change-details">${details}</ul>
+                </li>`;
+            }).join('');
+            document.getElementById('modified-details').style.display = modified.length > 0 ? 'block' : 'none';
+        }
+
+        function buildUrl(name) {
+            return `https://fr.wikisource.org/wiki/${encodeURIComponent(name.replace(/ /g, '_'))}`;
+        }
+    });
+    </script>
+</body>
+</html>

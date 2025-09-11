@@ -64,6 +64,12 @@
             cursor: pointer;
             background-color: #f8f9fa;
         }
+        summary .count {
+            font-weight: normal;
+            color: #6c757d;
+            font-size: 0.9em;
+            margin-left: 8px;
+        }
         .diff-list { list-style-type: none; padding: 0 15px 15px 15px; margin: 0; }
         .diff-list li { padding: 8px 0; border-bottom: 1px solid var(--border-color); }
         .diff-list li:last-child { border-bottom: none; }
@@ -76,6 +82,12 @@
         .change-details strong { color: #212529; }
         a { color: var(--link-color); text-decoration: none; }
         a:hover { text-decoration: underline; }
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -89,10 +101,26 @@
             <button id="compare-btn" disabled>Comparer</button>
         </div>
         <div id="results" class="results-section">
-            <details id="summary-details" open><summary>Résumé de la Comparaison</summary><ul id="summary-list" class="diff-list"></ul></details>
-            <details id="added-details"><summary>Pages Ajoutées</summary><ul id="added-list" class="diff-list"></ul></details>
-            <details id="removed-details"><summary>Pages Supprimées</summary><ul id="removed-list" class="diff-list"></ul></details>
-            <details id="modified-details"><summary>Pages Modifiées</summary><ul id="modified-list" class="diff-list"></ul></details>
+            <details id="summary-details" open>
+                <summary>Résumé de la Comparaison</summary>
+                <ul id="summary-list" class="diff-list"></ul>
+            </details>
+
+            <div class="comparison-grid">
+                <details id="added-details">
+                    <summary>Pages Ajoutées</summary>
+                    <ul id="added-list" class="diff-list"></ul>
+                </details>
+                <details id="removed-details">
+                    <summary>Pages Supprimées</summary>
+                    <ul id="removed-list" class="diff-list"></ul>
+                </details>
+            </div>
+
+            <details id="modified-details">
+                <summary>Pages Modifiées</summary>
+                <ul id="modified-list" class="diff-list"></ul>
+            </details>
         </div>
     </div>
 
@@ -207,14 +235,20 @@
                 <li><span class="badge removed">Supprimé</span> ${removed.length} page(s)</li>
                 <li><span class="badge modified">Modifié</span> ${modified.length} page(s)</li>
             `;
+            
+            document.querySelector('#added-details summary').innerHTML = `Pages Ajoutées <span class="count">(${added.length})</span>`;
+            document.querySelector('#removed-details summary').innerHTML = `Pages Supprimées <span class="count">(${removed.length})</span>`;
+            document.querySelector('#modified-details summary').innerHTML = `Pages Modifiées <span class="count">(${modified.length})</span>`;
 
             const addedList = document.getElementById('added-list');
             addedList.innerHTML = added.map(item => `<li><div class="diff-item"><span class="badge added">AJOUTÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${item.node.name}</a></div></li>`).join('');
             document.getElementById('added-details').style.display = added.length > 0 ? 'block' : 'none';
+            if (added.length > 0) document.getElementById('added-details').open = true;
 
             const removedList = document.getElementById('removed-list');
             removedList.innerHTML = removed.map(item => `<li><div class="diff-item"><span class="badge removed">SUPPRIMÉ</span><a href="${buildUrl(item.node.name)}" target="_blank">${item.node.name}</a></div></li>`).join('');
              document.getElementById('removed-details').style.display = removed.length > 0 ? 'block' : 'none';
+             if (removed.length > 0) document.getElementById('removed-details').open = true;
 
             const modifiedList = document.getElementById('modified-list');
             modifiedList.innerHTML = modified.map(item => {
@@ -235,6 +269,7 @@
                 </li>`;
             }).join('');
             document.getElementById('modified-details').style.display = modified.length > 0 ? 'block' : 'none';
+            if (modified.length > 0) document.getElementById('modified-details').open = true;
         }
 
         function buildUrl(name) {

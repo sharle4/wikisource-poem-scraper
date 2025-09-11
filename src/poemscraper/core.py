@@ -213,7 +213,7 @@ class ScraperOrchestrator:
                     page_title = page_data.get('title', page_title)
                     wikicode = mwparserfromhell.parse(wikitext)
                     
-                    classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
+                    classifier = PageClassifier(page_data, soup, self.config.lang, wikicode, self.log_manager)
                     page_type, classification_reason = classifier.classify()
 
                     if self.tree_logger:

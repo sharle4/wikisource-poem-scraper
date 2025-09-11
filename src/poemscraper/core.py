@@ -329,7 +329,7 @@ class ScraperOrchestrator:
                         json_str = result.model_dump_json()
                         f_gz.write(json_str + "\n")
                         if cleaned_fp is not None:
-                            data = result.model_dump()
+                            data = result.model_dump(mode="json")
                             if "title" in data:
                                 data["title"] = clean_title(data["title"])
                             cleaned_fp.write(json.dumps(data, ensure_ascii=False) + "\n")

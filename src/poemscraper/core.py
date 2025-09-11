@@ -49,6 +49,10 @@ class ScraperOrchestrator:
         self.processed_ids: Set[int] = set()
         self.processed_counter = 0
         self.skipped_counter = 0
+        # Network/backoff parameters
+        self._net_timeout_seconds = 25
+        self._net_retries = 2
+        self._backoff_base = 0.5
         
     async def run(self):
         """Méthode d'exécution principale."""
@@ -61,9 +65,10 @@ class ScraperOrchestrator:
             self.processed_ids = await self.db_manager.get_all_processed_ids()
             logger.info(f"Resume mode: Loaded {len(self.processed_ids)} already processed page IDs.")
 
-        page_queue = asyncio.Queue(maxsize=self.config.workers * 10)
+        # Unbounded queue prevents deadlocks when consumers enqueue many child pages
+        page_queue = asyncio.Queue()
         writer_sync_queue = queue.Queue(maxsize=self.config.workers * 2)
-        
+
         writer_thread = threading.Thread(
             target=self._sync_writer, args=(writer_sync_queue,), daemon=True
         )
@@ -77,14 +82,14 @@ class ScraperOrchestrator:
                     asyncio.create_task(self._consumer(client, page_queue, writer_sync_queue, pbar))
                     for _ in range(self.config.workers)
                 ]
-                
+
                 await producer_task
                 await page_queue.join()
 
                 for task in consumer_tasks:
                     task.cancel()
                 await asyncio.gather(*consumer_tasks, return_exceptions=True)
-                
+
                 writer_sync_queue.put(None)
                 writer_thread.join()
         
@@ -176,7 +181,11 @@ class ScraperOrchestrator:
                     continue
 
                 try:
-                    page_data = await client.get_resolved_page_data(page_id=page_id)
+                    page_data = await self._retry_call(
+                        lambda: client.get_resolved_page_data(page_id=page_id),
+                        op_name="get_resolved_page_data",
+                        ctx=f"page_id={page_id}"
+                    )
                     if not page_data:
                         raise PageProcessingError(f"API call for page ID {page_id} returned no data (page might be deleted or invalid).")
 
@@ -189,7 +198,11 @@ class ScraperOrchestrator:
 
                     timestamp = datetime.now(timezone.utc)
                     page_title = page_data.get('title', 'N/A')
-                    page_html = await client.get_rendered_html(final_page_id)
+                    page_html = await self._retry_call(
+                        lambda: client.get_rendered_html(final_page_id),
+                        op_name="get_rendered_html",
+                        ctx=f"page_id={final_page_id}"
+                    )
                     if not page_html:
                         raise PageProcessingError(f"API did not return rendered HTML for final page ID {final_page_id}.")
 
@@ -207,7 +220,7 @@ class ScraperOrchestrator:
                     if page_type == PageType.POEM:
                         try:
                             poem_data = self.processor.process(page_data, soup, self.config.lang, wikicode)
-                            await loop.run_in_executor(None, functools.partial(writer_queue.put, poem_data))
+                            await self._writer_put(writer_queue, poem_data)
                         except PoemParsingError as e:
                             logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
                             self.skipped_counter += 1
@@ -247,6 +260,30 @@ class ScraperOrchestrator:
             except asyncio.CancelledError:
                 break
 
+    async def _retry_call(self, coro_factory, op_name: str = "operation", ctx: str = ""):
+        """Execute an async operation with timeout and limited retries with exponential backoff."""
+        attempt = 0
+        while True:
+            try:
+                return await asyncio.wait_for(coro_factory(), timeout=self._net_timeout_seconds)
+            except (asyncio.TimeoutError, Exception) as e:
+                if attempt >= self._net_retries:
+                    logger.error(f"{op_name} failed after {attempt+1} attempts ({ctx}): {e}")
+                    return None
+                delay = self._backoff_base * (2 ** attempt)
+                logger.warning(f"{op_name} error ({ctx}), retry {attempt+1}/{self._net_retries} in {delay:.1f}s: {e}")
+                await asyncio.sleep(delay)
+                attempt += 1
+
+    async def _writer_put(self, writer_queue: queue.Queue, item):
+        """Non-blocking put with backoff to avoid deadlocks if writer thread stalls temporarily."""
+        while True:
+            try:
+                writer_queue.put_nowait(item)
+                return
+            except queue.Full:
+                await asyncio.sleep(0.05)
+
 
     async def _enqueue_new_titles(
         self, client: WikiAPIClient, queue: asyncio.Queue, titles: list[str], pbar: tqdm,
@@ -281,13 +318,15 @@ class ScraperOrchestrator:
                 if result is None:
                     writer_queue.task_done()
                     break
-                
-                if isinstance(result, PoemSchema):
-                    f_gz.write(result.model_dump_json() + "\n")
-                    self.db_manager.add_poem_index_sync(result, db_cursor)
-                    self.processed_counter += 1
-                
-                writer_queue.task_done()
+                try:
+                    if isinstance(result, PoemSchema):
+                        f_gz.write(result.model_dump_json() + "\n")
+                        self.db_manager.add_poem_index_sync(result, db_cursor)
+                        self.processed_counter += 1
+                except Exception as e:
+                    logger.error(f"Writer thread failed to persist a record: {e}")
+                finally:
+                    writer_queue.task_done()
         
         db_conn.commit()
         db_conn.close()

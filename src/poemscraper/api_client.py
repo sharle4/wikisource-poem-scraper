@@ -8,7 +8,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/3.6.1 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/3.6.2 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -128,7 +128,37 @@ class WikiAPIClient:
         params = {"action": "parse", "pageid": page_id, "prop": "text", "disabletoc": True, "disableeditsection": True}
         data = await self._make_request(params)
         return data.get("parse", {}).get("text")
-
+    
+    async def get_resolved_page_data(self, page_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Récupère les données définitives d'une page à partir de son ID, en résolvant automatiquement les redirections.
+        C'est la méthode privilégiée pour récupérer le contenu d'une page car elle utilise un seul appel API efficace.
+        Retourne l'objet de données de la page finale, ou None si la page est manquante ou invalide.
+        """
+        params = {
+            "action": "query",
+            "prop": "info|revisions|categories",
+            "rvprop": "ids|timestamp|content",
+            "inprop": "url",
+            "cllimit": "max",
+            "redirects": 1,
+            "pageids": page_id
+        }
+        try:
+            data = await self._make_request(params)
+            
+            if not data.get("query", {}).get("pages"):
+                return None
+            
+            page_data = data["query"]["pages"][0]
+            if page_data.get("missing") or "invalid" in page_data:
+                return None
+                
+            return page_data
+        except Exception as e:
+            logger.error(f"Failed to resolve page data for id={page_id}: {e}")
+            return None
+        
     async def get_page_data_by_id(self, page_id: int) -> Optional[Dict[str, Any]]:
         """Fetches raw wikitext, categories, and metadata for a page."""
         params = {

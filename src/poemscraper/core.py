@@ -176,42 +176,27 @@ class ScraperOrchestrator:
                     continue
 
                 try:
-                    timestamp = datetime.now(timezone.utc)
-                    page_data = await client.get_page_data_by_id(page_id)
+                    page_data = await client.get_resolved_page_data(page_id=page_id)
                     if not page_data:
-                        raise PageProcessingError("API did not return page data.")
+                        raise PageProcessingError(f"API call for page ID {page_id} returned no data (page might be deleted or invalid).")
+
+                    final_page_id = page_data["pageid"]
                     
-                    page_url = page_data.get("fullurl", "")
-                    page_html = await client.get_rendered_html(page_id)
+                    if final_page_id in self.processed_ids:
+                        self.processed_ids.add(page_id)
+                        page_queue.task_done()
+                        continue
+
+                    timestamp = datetime.now(timezone.utc)
+                    page_title = page_data.get('title', 'N/A')
+                    page_html = await client.get_rendered_html(final_page_id)
                     if not page_html:
-                        raise PageProcessingError("API did not return rendered HTML.")
+                        raise PageProcessingError(f"API did not return rendered HTML for final page ID {final_page_id}.")
 
                     soup = BeautifulSoup(page_html, "lxml")
                     wikitext = page_data.get("revisions", [{}])[0].get("content", "")
                     wikicode = mwparserfromhell.parse(wikitext)
-                    
-                    wikitext = page_data.get("revisions", [{}])[0].get("content", "") or ""
-                    m = re.match(r'^\s*#(?:REDIRECT|REDIRECTION)\s*\[\[(.+?)\]\]', wikitext, flags=re.IGNORECASE)
-                    if m :
-                        target = m.group(1)
-                        target = unquote(target.split("|", 1)[0].split("#", 1)[0]).replace("_", " ").strip()
-                        redirect_info = await client.get_page_info_and_redirects([target])
-                        target_pages = redirect_info.get("pages", []) if redirect_info else []
-                        for p in target_pages:
-                            if not p.get("missing"):
-                                page_id = p["pageid"]
-                                break
-                        page_data = await client.get_page_data_by_id(page_id)
-                        wikitext = page_data.get("revisions", [{}])[0].get("content", "") or ""
-                    
-                    page_url = page_data.get("fullurl", "") or f"https://{self.config.lang}.wikisource.org/wiki/{page_data.get('title','').replace(' ', '_')}"
-                    page_html = await client.get_rendered_html(page_id)
-                    if not page_html:
-                        raise PageProcessingError("API did not return rendered HTML.")
-
-                    soup = BeautifulSoup(page_html, "lxml")
-                    page_title = page_data.get('title', page_title)
-                    wikicode = mwparserfromhell.parse(wikitext)
+                    page_url = page_data.get("fullurl", "") or f"https://{self.config.lang}.wikisource.org/wiki/{page_title.replace(' ', '_')}"
                     
                     classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
                     page_type, classification_reason = classifier.classify()
@@ -255,6 +240,8 @@ class ScraperOrchestrator:
                     self.skipped_counter += 1
                 finally:
                     self.processed_ids.add(page_id)
+                    if 'final_page_id' in locals():
+                        self.processed_ids.add(final_page_id)
                     pbar.update(1)
                     page_queue.task_done()
             except asyncio.CancelledError:

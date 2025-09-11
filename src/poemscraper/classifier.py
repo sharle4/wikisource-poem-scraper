@@ -119,11 +119,14 @@ class PageClassifier:
 
         links = self.soup.select('a[href][title]')
 
+        normalized_self_title = re.sub(r"\s*\([^)]*\)", "", self.title or "")
+        normalized_self_title = re.sub(r"\s+", " ", normalized_self_title).strip().lower()
+
         for link in links:
             href = link.get("href", "")
             link_title = link.get('title', '')
 
-            if not href.startswith("/wiki/") or link_title == self.title:
+            if not href.startswith("/wiki/"):
                 continue
             
             if any(link_title.startswith(f"{prefix}:") for prefix in internal_prefixes_to_ignore) or \
@@ -132,7 +135,7 @@ class PageClassifier:
 
             is_a_version = False
             
-            if self.title in link_title:
+            if normalized_self_title in link_title:
                 is_a_version = True
             
             else:

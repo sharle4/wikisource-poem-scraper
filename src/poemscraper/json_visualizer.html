@@ -38,6 +38,8 @@
         .poem-text {
             font-family: 'Merriweather', serif;
             white-space: pre-line;
+            background-color: rgba(var(--background-start-rgb), 0.5);
+            padding: 1.5rem;
         }
         .smooth-transition {
             transition: all 0.3s ease-in-out;
@@ -46,6 +48,8 @@
             border-color: var(--accent-color);
             background-color: rgba(var(--card-bg-rgb), 0.7);
         }
+        summary::-webkit-details-marker { display: none; }
+        summary { list-style: none; }
     </style>
 </head>
 <body class="h-full antialiased">
@@ -80,7 +84,7 @@
             <section id="content-section" class="hidden smooth-transition">
                 <div class="bg-[rgb(var(--card-bg-rgb))] border border-[var(--border-color)] shadow-xl rounded-lg p-6 mb-8">
                     <label for="author-select" class="block text-lg font-semibold mb-3 text-[rgb(var(--header-color-rgb))]">Choisissez un auteur :</label>
-                    <select id="author-select" class="w-full p-3 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)]">
+                    <select id="author-select" class="w-full p-3 bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-50 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)]">
                         <option value="">-- Veuillez sélectionner --</option>
                     </select>
                 </div>
@@ -95,30 +99,16 @@
     <script id="worker-script" type="javascript/worker">
         self.onmessage = function(e) {
             const fileContent = e.data;
-            
             postMessage({ status: 'parsing' });
-
-            const poems = fileContent
-                .trim()
-                .split('\n')
-                .map(line => {
-                    try {
-                        return JSON.parse(line);
-                    } catch (err) {
-                        return null;
-                    }
-                })
-                .filter(Boolean);
-
+            const poems = fileContent.trim().split('\n').map(line => {
+                try { return JSON.parse(line); } catch (err) { return null; }
+            }).filter(Boolean);
             const authors = new Map();
             poems.forEach(poem => {
                 const author = poem.metadata.author || "Auteur inconnu";
-                if (!authors.has(author)) {
-                    authors.set(author, []);
-                }
+                if (!authors.has(author)) { authors.set(author, []); }
                 authors.get(author).push(poem);
             });
-
             const authorsArray = Array.from(authors.entries());
             postMessage({ status: 'done', data: authorsArray });
         };
@@ -143,56 +133,40 @@
 
             dropZone.addEventListener('click', () => fileInput.click());
             fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-            
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, preventDefaults, false);
-            });
-            
-            ['dragenter', 'dragover'].forEach(eventName => {
-                dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'), false);
-            });
-            
-            ['dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'), false);
-            });
-
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, preventDefaults, false));
+            ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.add('drag-over'), false));
+            ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.remove('drag-over'), false));
             dropZone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
 
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
+            function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
 
             function handleFile(file) {
                 if (!file || !file.name.endsWith('.jsonl.gz')) {
                     alert("Veuillez sélectionner un fichier '.jsonl.gz' valide.");
                     return;
                 }
-                
                 uploadSection.classList.add('opacity-0');
                 loadingSection.classList.remove('hidden');
-
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     try {
-                        const compressedData = new Uint8Array(event.target.result);
-                        const decompressed = pako.inflate(compressedData, { to: 'string' });
+                        const compressed = new Uint8Array(event.target.result);
+                        const decompressed = pako.inflate(compressed, { to: 'string' });
                         loadingStatus.textContent = 'Analyse des poèmes...';
                         worker.postMessage(decompressed);
                     } catch (err) {
                         console.error("Erreur de décompression:", err);
-                        alert("Le fichier semble corrompu ou n'est pas au format GZIP valide.");
+                        alert("Le fichier semble corrompu.");
                         resetUI();
                     }
                 };
                 reader.readAsArrayBuffer(file);
             }
-            
+
             worker.onmessage = function(e) {
                 const { status, data } = e.data;
-                if (status === 'parsing') {
-                    loadingStatus.textContent = 'Structuration des données...';
-                } else if (status === 'done') {
+                if (status === 'parsing') { loadingStatus.textContent = 'Structuration des données...'; } 
+                else if (status === 'done') {
                     authorsData = new Map(data);
                     populateAuthors();
                     loadingSection.classList.add('hidden');
@@ -200,11 +174,11 @@
                     uploadSection.classList.add('hidden');
                 }
             };
-            
+
             function populateAuthors() {
-                const sortedAuthors = [...authorsData.keys()].sort((a, b) => a.localeCompare(b));
+                const sorted = [...authorsData.keys()].sort((a, b) => a.localeCompare(b));
                 authorSelect.innerHTML = '<option value="">-- Veuillez sélectionner --</option>';
-                sortedAuthors.forEach(author => {
+                sorted.forEach(author => {
                     const option = document.createElement('option');
                     option.value = author;
                     option.textContent = `${author} (${authorsData.get(author).length} poèmes)`;
@@ -213,81 +187,89 @@
             }
 
             authorSelect.addEventListener('change', () => {
-                const selectedAuthor = authorSelect.value;
-                if (selectedAuthor) {
-                    renderPoems(authorsData.get(selectedAuthor));
-                } else {
-                    resultsContainer.innerHTML = '';
-                }
+                const author = authorSelect.value;
+                if (author) renderPoems(authorsData.get(author));
+                else resultsContainer.innerHTML = '';
             });
 
             function renderPoems(poems) {
                 resultsContainer.innerHTML = '';
-                
-                const groupedByCollection = poems.reduce((acc, poem) => {
-                    const collection = poem.metadata.source_collection || "Poèmes sans recueil";
-                    if (!acc.has(collection)) {
-                        acc.set(collection, []);
-                    }
-                    acc.get(collection).push(poem);
+                const grouped = poems.reduce((acc, poem) => {
+                    const key = poem.metadata.source_collection || "Poèmes sans recueil";
+                    if (!acc.has(key)) acc.set(key, []);
+                    acc.get(key).push(poem);
                     return acc;
                 }, new Map());
 
-                const sortedCollections = [...groupedByCollection.keys()].sort((a, b) => {
+                const sortedKeys = [...grouped.keys()].sort((a, b) => {
                     if (a === "Poèmes sans recueil") return 1;
                     if (b === "Poèmes sans recueil") return -1;
                     return a.localeCompare(b);
                 });
 
-                for (const collection of sortedCollections) {
-                    const collectionPoems = groupedByCollection.get(collection);
-                    const collectionElement = createCollectionElement(collection, collectionPoems);
-                    resultsContainer.appendChild(collectionElement);
-                }
-            }
-            
-            function createCollectionElement(collectionName, poems) {
-                const section = document.createElement('section');
-                section.className = 'mb-12';
-                
-                const title = document.createElement('h2');
-                title.className = 'text-2xl font-bold border-b-2 border-[var(--accent-color)]/50 pb-2 mb-6 text-[rgb(var(--header-color-rgb))]';
-                title.textContent = collectionName;
-                section.appendChild(title);
-                
-                const grid = document.createElement('div');
-                grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
-                section.appendChild(grid);
-
-                poems.forEach(poem => {
-                    grid.appendChild(createPoemElement(poem));
+                sortedKeys.forEach((collectionName, index) => {
+                    const collectionPoems = grouped.get(collectionName);
+                    resultsContainer.appendChild(createCollapsibleCollection(collectionName, collectionPoems, index === 0));
                 });
-                
-                return section;
             }
 
-            function createPoemElement(poem) {
-                const article = document.createElement('article');
-                article.className = 'bg-[rgb(var(--card-bg-rgb))] border border-[var(--border-color)] rounded-lg shadow-lg p-6 flex flex-col smooth-transition hover:shadow-xl hover:-translate-y-1';
+            function createCollapsibleCollection(name, poems, isOpen) {
+                const details = document.createElement('details');
+                details.className = 'bg-[rgb(var(--card-bg-rgb))] border border-[var(--border-color)] rounded-lg shadow-lg mb-4 overflow-hidden';
+                if (isOpen) details.open = true;
+
+                details.innerHTML = `
+                    <summary class="p-4 font-semibold text-[rgb(var(--header-color-rgb))] cursor-pointer flex justify-between items-center group hover:bg-slate-100 dark:hover:bg-slate-700/50 smooth-transition">
+                        <span class="text-lg">${name} (${poems.length} poèmes)</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 transform transition-transform duration-300 group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                    </summary>
+                    <div class="border-t border-[var(--border-color)]">
+                        <div class="hidden md:grid grid-cols-[minmax(0,_3fr)_minmax(0,_1fr)_minmax(0,_1fr)_minmax(0,_1fr)_auto] gap-4 p-3 font-bold text-xs uppercase text-[var(--subtle-text-color)] border-b border-slate-300 dark:border-slate-600">
+                            <span>Titre</span>
+                            <span>Publication</span>
+                            <span>Éditeur</span>
+                            <span>Traducteur</span>
+                            <span class="text-right">Lien</span>
+                        </div>
+                        <div class="poem-list"></div>
+                    </div>
+                `;
+                
+                const poemListContainer = details.querySelector('.poem-list');
+                poems.sort((a,b) => a.title.localeCompare(b.title)).forEach(poem => {
+                    poemListContainer.appendChild(createPoemListItem(poem));
+                });
+
+                return details;
+            }
+
+            function createPoemListItem(poem) {
+                const details = document.createElement('details');
+                details.className = 'poem-item-details group border-b border-slate-200 dark:border-slate-700 last:border-b-0';
 
                 const meta = poem.metadata;
                 const nullDisplay = `<span class="italic text-[var(--subtle-text-color)]">non spécifié</span>`;
 
-                article.innerHTML = `
-                    <h3 class="text-xl font-semibold mb-3 text-[rgb(var(--header-color-rgb))]">${poem.title}</h3>
-                    <div class="text-sm text-[var(--subtle-text-color)] border-t border-b border-[var(--border-color)] py-3 mb-4 space-y-1">
-                        <p><strong>Date de publication :</strong> ${meta.publication_date || nullDisplay}</p>
-                        <p><strong>Éditeur :</strong> ${meta.publisher || nullDisplay}</p>
-                        <p><strong>Traducteur :</strong> ${meta.translator || nullDisplay}</p>
+                details.innerHTML = `
+                    <summary class="list-none cursor-pointer">
+                        <div class="grid grid-cols-2 md:grid-cols-[minmax(0,_3fr)_minmax(0,_1fr)_minmax(0,_1fr)_minmax(0,_1fr)_auto] gap-4 items-center p-3 text-sm group-hover:bg-slate-50 dark:group-hover:bg-slate-700/50">
+                            <div class="font-semibold text-[rgb(var(--header-color-rgb))] col-span-2 md:col-span-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline-block mr-2 transform transition-transform duration-300 group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                                ${poem.title}
+                            </div>
+                            <div class="hidden md:block">${meta.publication_date || nullDisplay}</div>
+                            <div class="hidden md:block">${meta.publisher || nullDisplay}</div>
+                            <div class="hidden md:block">${meta.translator || nullDisplay}</div>
+                            <a href="${poem.wikisource_url}" target="_blank" rel="noopener noreferrer" class="text-[var(--accent-color)] justify-self-end hover:underline" onclick="event.stopPropagation()">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                            </a>
+                        </div>
+                    </summary>
+                    <div class="poem-text text-base leading-relaxed">
+                        ${poem.structure.stanzas.map(stanza => `<div>${stanza.join('<br>')}</div>`).join('<br>')}
                     </div>
-                    <div class="poem-text text-base leading-relaxed flex-grow">
-                        ${poem.structure.stanzas.map(stanza => `<p>${stanza.join('<br>')}</p>`).join('')}
-                    </div>
-                    <a href="${poem.wikisource_url}" target="_blank" rel="noopener noreferrer" class="text-[var(--accent-color)] hover:underline text-sm mt-4 self-start">
-                        Voir sur Wikisource →
-                    </a>
                 `;
-                return article;
+                return details;
             }
 
             function resetUI() {

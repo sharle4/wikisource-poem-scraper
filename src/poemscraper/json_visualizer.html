@@ -11,23 +11,28 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
     <style>
         :root {
-            --background-start-rgb: 243, 244, 246;
-            --background-end-rgb: 229, 231, 235;
-            --card-bg-rgb: 255, 255, 255;
-            --text-color: #1f2937;
-            --header-color: #111827;
-            --accent-color: #4f46e5;
+            --background-start-rgb: 248, 250, 252; /* slate-50 */
+            --background-end-rgb: 241, 245, 249;   /* slate-100 */
+            --card-bg-rgb: 255, 255, 255;          /* white */
+            --text-color-rgb: 51, 65, 85;          /* slate-700 */
+            --header-color-rgb: 15, 23, 42;        /* slate-900 */
+            --accent-color: #4f46e5;               /* indigo-600 */
+            --border-color: #e2e8f0;               /* slate-200 */
+            --subtle-text-color: #64748b;          /* slate-500 */
         }
         html.dark {
-            --background-start-rgb: 17, 24, 39;
-            --background-end-rgb: 3, 7, 18;
-            --card-bg-rgb: 31, 41, 55;
-            --text-color: #d1d5db;
-            --header-color: #f9fafb;
+            --background-start-rgb: 15, 23, 42;    /* slate-900 */
+            --background-end-rgb: 0, 0, 0;          /* black */
+            --card-bg-rgb: 30, 41, 59;             /* slate-800 */
+            --text-color-rgb: 203, 213, 225;       /* slate-300 */
+            --header-color-rgb: 248, 250, 252;     /* slate-50 */
+            --accent-color: #6366f1;               /* indigo-500 */
+            --border-color: #475569;               /* slate-600 */
+            --subtle-text-color: #94a3b8;          /* slate-400 */
         }
         body {
             font-family: 'Inter', sans-serif;
-            color: var(--text-color);
+            color: rgb(var(--text-color-rgb));
             background: linear-gradient(to bottom, rgb(var(--background-start-rgb)), rgb(var(--background-end-rgb)));
         }
         .poem-text {
@@ -43,13 +48,13 @@
         }
     </style>
 </head>
-<body class="h-full bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 antialiased">
+<body class="h-full antialiased">
 
     <div class="container mx-auto p-4 md:p-8 max-w-7xl">
 
         <header class="text-center mb-8">
-            <h1 class="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-2">Visualiseur de Poèmes</h1>
-            <p class="text-lg text-gray-600 dark:text-gray-400">Chargez un fichier <code class="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-md text-sm">poems.jsonl.gz</code> pour explorer les œuvres.</p>
+            <h1 class="text-4xl md:text-5xl font-bold text-[rgb(var(--header-color-rgb))] mb-2">Visualiseur de Poèmes</h1>
+            <p class="text-lg text-[var(--subtle-text-color)]">Chargez un fichier <code class="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 px-1.5 py-0.5 rounded-md text-sm">poems.jsonl.gz</code> pour explorer les œuvres.</p>
         </header>
 
         <main>
@@ -66,16 +71,16 @@
             
             <section id="loading-section" class="hidden text-center py-12 smooth-transition">
                 <div role="status" class="inline-flex flex-col items-center">
-                    <svg aria-hidden="true" class="w-10 h-10 mb-3 text-gray-400 animate-spin dark:text-gray-600 fill-indigo-600" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0492C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill"/></svg>
+                    <svg aria-hidden="true" class="w-10 h-10 mb-3 text-gray-400 animate-spin dark:text-gray-600 fill-[var(--accent-color)]" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0492C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill"/></svg>
                     <p id="loading-status" class="text-lg font-medium text-gray-600 dark:text-gray-400">Décompression du fichier...</p>
                     <span class="sr-only">Chargement...</span>
                 </div>
             </section>
 
             <section id="content-section" class="hidden smooth-transition">
-                <div class="bg-[rgba(var(--card-bg-rgb),0.7)] backdrop-blur-sm shadow-lg rounded-lg p-6 mb-8">
-                    <label for="author-select" class="block text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Choisissez un auteur :</label>
-                    <select id="author-select" class="w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                <div class="bg-[rgb(var(--card-bg-rgb))] border border-[var(--border-color)] shadow-xl rounded-lg p-6 mb-8">
+                    <label for="author-select" class="block text-lg font-semibold mb-3 text-[rgb(var(--header-color-rgb))]">Choisissez un auteur :</label>
+                    <select id="author-select" class="w-full p-3 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-[var(--accent-color)] focus:border-[var(--accent-color)]">
                         <option value="">-- Veuillez sélectionner --</option>
                     </select>
                 </div>
@@ -246,7 +251,7 @@
                 section.className = 'mb-12';
                 
                 const title = document.createElement('h2');
-                title.className = 'text-2xl font-bold border-b-2 border-indigo-300 dark:border-indigo-600 pb-2 mb-6 text-gray-800 dark:text-gray-100';
+                title.className = 'text-2xl font-bold border-b-2 border-[var(--accent-color)]/50 pb-2 mb-6 text-[rgb(var(--header-color-rgb))]';
                 title.textContent = collectionName;
                 section.appendChild(title);
                 
@@ -263,14 +268,14 @@
 
             function createPoemElement(poem) {
                 const article = document.createElement('article');
-                article.className = 'bg-[rgba(var(--card-bg-rgb),0.8)] dark:bg-[rgba(var(--card-bg-rgb),0.9)] backdrop-blur-sm rounded-lg shadow-md p-6 flex flex-col smooth-transition hover:shadow-xl hover:-translate-y-1';
+                article.className = 'bg-[rgb(var(--card-bg-rgb))] border border-[var(--border-color)] rounded-lg shadow-lg p-6 flex flex-col smooth-transition hover:shadow-xl hover:-translate-y-1';
 
                 const meta = poem.metadata;
-                const nullDisplay = '<span class="italic text-gray-500">non spécifié</span>';
+                const nullDisplay = `<span class="italic text-[var(--subtle-text-color)]">non spécifié</span>`;
 
                 article.innerHTML = `
-                    <h3 class="text-xl font-semibold mb-3 text-gray-900 dark:text-white">${poem.title}</h3>
-                    <div class="text-sm text-gray-600 dark:text-gray-400 border-t border-b border-gray-200 dark:border-gray-700 py-3 mb-4 space-y-1">
+                    <h3 class="text-xl font-semibold mb-3 text-[rgb(var(--header-color-rgb))]">${poem.title}</h3>
+                    <div class="text-sm text-[var(--subtle-text-color)] border-t border-b border-[var(--border-color)] py-3 mb-4 space-y-1">
                         <p><strong>Date de publication :</strong> ${meta.publication_date || nullDisplay}</p>
                         <p><strong>Éditeur :</strong> ${meta.publisher || nullDisplay}</p>
                         <p><strong>Traducteur :</strong> ${meta.translator || nullDisplay}</p>
@@ -278,7 +283,7 @@
                     <div class="poem-text text-base leading-relaxed flex-grow">
                         ${poem.structure.stanzas.map(stanza => `<p>${stanza.join('<br>')}</p>`).join('')}
                     </div>
-                    <a href="${poem.wikisource_url}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 hover:underline text-sm mt-4 self-start">
+                    <a href="${poem.wikisource_url}" target="_blank" rel="noopener noreferrer" class="text-[var(--accent-color)] hover:underline text-sm mt-4 self-start">
                         Voir sur Wikisource →
                     </a>
                 `;

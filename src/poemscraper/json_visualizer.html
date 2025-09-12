@@ -194,6 +194,16 @@
 
             function renderPoems(poems) {
                 resultsContainer.innerHTML = '';
+
+                const titleCounts = poems.reduce((acc, poem) => {
+                    acc.set(poem.title, (acc.get(poem.title) || 0) + 1);
+                    return acc;
+                }, new Map());
+
+                poems.forEach(poem => {
+                    poem.is_duplicate = titleCounts.get(poem.title) > 1;
+                });
+
                 const grouped = poems.reduce((acc, poem) => {
                     const key = poem.metadata.source_collection || "Poèmes sans recueil";
                     if (!acc.has(key)) acc.set(key, []);
@@ -249,13 +259,17 @@
 
                 const meta = poem.metadata;
                 const nullDisplay = `<span class="italic text-[var(--subtle-text-color)]">non spécifié</span>`;
+                const duplicateIndicator = poem.is_duplicate 
+                    ? `<span class="inline-block w-2.5 h-2.5 bg-amber-500 rounded-full ml-2" title="Ce titre existe en plusieurs versions ou éditions."></span>` 
+                    : '';
 
                 details.innerHTML = `
                     <summary class="list-none cursor-pointer">
                         <div class="grid grid-cols-2 md:grid-cols-[minmax(0,_3fr)_minmax(0,_1fr)_minmax(0,_1fr)_minmax(0,_1fr)_auto] gap-4 items-center p-3 text-sm group-hover:bg-slate-50 dark:group-hover:bg-slate-700/50">
-                            <div class="font-semibold text-[rgb(var(--header-color-rgb))] col-span-2 md:col-span-1">
+                            <div class="font-semibold text-[rgb(var(--header-color-rgb))] col-span-2 md:col-span-1 flex items-center">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline-block mr-2 transform transition-transform duration-300 group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
-                                ${poem.title}
+                                <span class="truncate">${poem.title}</span>
+                                ${duplicateIndicator}
                             </div>
                             <div class="hidden md:block">${meta.publication_date || nullDisplay}</div>
                             <div class="hidden md:block">${meta.publisher || nullDisplay}</div>

@@ -5,7 +5,7 @@ from typing import Set
 
 import aiosqlite
 
-from .schemas import PoemSchema
+from .models import PoemSchema
 
 logger = logging.getLogger(__name__)
 

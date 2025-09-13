@@ -19,7 +19,7 @@ from .classifier import PageClassifier, PageType
 from .database import DatabaseManager, connect_sync_db
 from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
-from .schemas import PoemSchema
+from .models import PoemSchema
 from .clean_titles import clean_title
 from .tree_logger import HierarchicalLogger
 from .log_manager import LogManager

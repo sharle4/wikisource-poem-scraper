@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from bs4 import BeautifulSoup
 
-from .models import PoemStructure
+from .schemas import PoemStructure
 
 logger = logging.getLogger(__name__)
 

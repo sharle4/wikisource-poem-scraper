@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import mwparserfromhell
 from bs4 import BeautifulSoup, Tag
 
-from .models import PoemSchema, PoemMetadata
+from .schemas import PoemSchema, PoemMetadata
 from .parsing import PoemParser
 from .exceptions import PoemParsingError
 

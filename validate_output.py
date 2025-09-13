@@ -3,7 +3,7 @@ import gzip
 import sys
 import logging
 from pydantic import ValidationError
-from poemscraper.models import PoemSchema
+from src.poemscraper.schemas import PoemSchema
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

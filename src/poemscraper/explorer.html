@@ -143,8 +143,8 @@
                     const collectionName = poem.metadata.source_collection;
                     const hubId = poem.hub_title ? poem.hub_page_id : null;
                     
-                    if(collectionName) db.collections.get(collectionName).poems.push(poem);
-                    if(hubId) db.hubs.get(hubId).versions.push(poem);
+                    if(collectionName && db.collections.has(collectionName)) db.collections.get(collectionName).poems.push(poem);
+                    if(hubId && db.hubs.has(hubId)) db.hubs.get(hubId).versions.push(poem);
 
                     if (collectionName && db.collections.has(collectionName)) {
                         const collection = db.collections.get(collectionName);
@@ -387,7 +387,7 @@
                 const link = template.querySelector('a');
                 link.href = `#author/${encodeURIComponent(author.name)}`;
                 link.querySelector('p').textContent = author.name;
-                const meta = link.querySelector('div');
+                const meta = link.querySelector('.text-sm');
                 meta.innerHTML = `<span>${author.stats.totalPoems} poèmes</span><span>${author.stats.totalCollections} recueils</span>`;
                 return template;
             },
@@ -397,7 +397,7 @@
                 const link = template.querySelector('a');
                 link.href = `#collection/${encodeURIComponent(collection.name)}`;
                 link.querySelector('p').textContent = collection.name;
-                const meta = link.querySelector('div');
+                const meta = link.querySelector('.text-sm');
                 meta.innerHTML = `<span>${collection.poems.length} poèmes</span>`;
                 return template;
             },
@@ -407,7 +407,7 @@
                 const link = template.querySelector('a');
                 link.href = `#hub/${hub.id}`;
                 link.querySelector('p').textContent = hub.title;
-                const meta = link.querySelector('div');
+                const meta = link.querySelector('.text-sm');
                 meta.innerHTML = `<span>${hub.versions.length} versions</span>`;
                 return template;
             },
@@ -417,7 +417,7 @@
                 const link = template.querySelector('a');
                 link.href = `#poem/${poem.page_id}`;
                 link.querySelector('p').textContent = poem.title;
-                const meta = link.querySelector('div');
+                const meta = link.querySelector('.text-sm');
                 const author = poem.metadata.author || 'Inconnu';
                 const collection = poem.metadata.source_collection || 'Hors recueil';
                 meta.innerHTML = `<span>${author}</span><span>${collection}</span>`;
@@ -444,36 +444,45 @@
                 const container = this.views.list;
 
                 if (author.collections.size > 0) {
+                   const sortedCollections = [...author.collections.values()].sort((a,b) => a.name.localeCompare(b.name));
                    container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Recueils</h3>`;
                    const listEl = document.createElement('div');
                    listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
-                   author.collections.forEach(c => listEl.appendChild(this.renderCollectionListItem(c)));
+                   sortedCollections.forEach(c => listEl.appendChild(this.renderCollectionListItem(c)));
                    container.appendChild(listEl);
                 }
                  if (author.hubsWithoutCollection.size > 0) {
+                   const sortedHubs = [...author.hubsWithoutCollection.values()].sort((a,b) => a.title.localeCompare(b.title));
                    container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Multi-versions (Hors Recueil)</h3>`;
                    const listEl = document.createElement('div');
                    listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
-                   author.hubsWithoutCollection.forEach(h => listEl.appendChild(this.renderHubListItem(h)));
+                   sortedHubs.forEach(h => listEl.appendChild(this.renderHubListItem(h)));
                    container.appendChild(listEl);
                 }
                  if (author.poemsWithoutCollectionOrHub.length > 0) {
+                   const sortedPoems = [...author.poemsWithoutCollectionOrHub].sort((a,b) => a.title.localeCompare(b.title));
                    container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Isolés</h3>`;
                    const listEl = document.createElement('div');
                    listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
-                   author.poemsWithoutCollectionOrHub.forEach(p => listEl.appendChild(this.renderPoemListItem(p)));
+                   sortedPoems.forEach(p => listEl.appendChild(this.renderPoemListItem(p)));
                    container.appendChild(listEl);
                 }
             },
             
             renderCollectionDetail(collectionName) {
                 const collection = this.db.collections.get(collectionName);
-                this.renderList(collection.name, collection.poems, this.renderPoemListItem, p => p.title);
+                if (!collection) return this.views.list.innerHTML = '<p>Recueil non trouvé.</p>';
+
+                const poems = [...collection.poems].sort((a, b) => a.title.localeCompare(b.title));
+                this.renderList(collection.name, poems, this.renderPoemListItem);
             },
             
             renderHubDetail(hubId) {
                 const hub = this.db.hubs.get(hubId);
-                this.renderList(hub.title, hub.versions, this.renderPoemListItem, p => p.title);
+                if (!hub) return this.views.list.innerHTML = '<p>Hub non trouvé.</p>';
+
+                const versions = [...hub.versions].sort((a, b) => a.title.localeCompare(b.title));
+                this.renderList(hub.title, versions, this.renderPoemListItem);
             },
             
             renderPoemDetail(pageId) {

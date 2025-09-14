@@ -50,8 +50,12 @@ class PoemProcessor:
         metadata_obj = PoemMetadata(**final_meta_dict)
         normalized_text = PoemParser.create_normalized_text(structure)
 
-        hub_title = hub_info.get("title") if hub_info else None
-        hub_page_id = hub_info.get("page_id") if hub_info else None
+        if hub_info:
+            hub_title = hub_info["title"]
+            hub_page_id = hub_info["page_id"]
+        else:
+            hub_title = page_data["title"]
+            hub_page_id = page_data["pageid"]
 
         poem_obj = PoemSchema(
             page_id=page_data["pageid"],

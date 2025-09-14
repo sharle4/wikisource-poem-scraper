@@ -29,7 +29,6 @@ class PoemMetadata(BaseModel):
     )
     publisher: Optional[str] = Field(None, description="Maison d'édition.")
     translator: Optional[str] = Field(None, description="Traducteur, si applicable.")
-    license_name: Optional[str] = Field(None, description="Nom de la licence détectée.")
 
 
 class PoemSchema(BaseModel):

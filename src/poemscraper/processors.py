@@ -86,7 +86,6 @@ class PoemProcessor:
             "isPartOf": "source_collection",
             "publisher": "publisher",
             "translator": "translator",
-            "license": "license_name",
         }
 
         for prop, key in itemprop_map.items():

@@ -20,7 +20,7 @@ from .database import DatabaseManager, connect_sync_db
 from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
 from .schemas import PoemSchema
-from .clean_titles import clean_title
+from .cleaner import process_poem
 from .tree_logger import HierarchicalLogger
 from .log_manager import LogManager
 
@@ -319,8 +319,11 @@ class ScraperOrchestrator:
         """Tâche synchrone pour gérer toutes les E/S disque."""
         db_conn, db_cursor = connect_sync_db(self.db_path)
         cleaned_fp = None
+        seen_cleaned_page_ids: set[int] = set()
+
         if self.write_cleaned:
             cleaned_fp = gzip.open(self.cleaned_output_file, "at", encoding='utf-8')
+
         with gzip.open(self.output_file, "at", encoding='utf-8') as f_gz:
             while True:
                 result = writer_queue.get()
@@ -331,17 +334,25 @@ class ScraperOrchestrator:
                     if isinstance(result, PoemSchema):
                         json_str = result.model_dump_json()
                         f_gz.write(json_str + "\n")
+
                         if cleaned_fp is not None:
-                            data = result.model_dump(mode="json")
-                            if "title" in data:
-                                data["title"] = clean_title(data["title"])
-                            cleaned_fp.write(json.dumps(data, ensure_ascii=False) + "\n")
+                            page_id = result.page_id
+                            if page_id not in seen_cleaned_page_ids:
+                                seen_cleaned_page_ids.add(page_id)
+                                
+                                poem_dict = result.model_dump(mode="json")
+                                cleaned_poem = process_poem(poem_dict)
+                                
+                                cleaned_fp.write(json.dumps(cleaned_poem, ensure_ascii=False) + "\n")
+
                         self.db_manager.add_poem_index_sync(result, db_cursor)
                         self.processed_counter += 1
+
                 except Exception as e:
                     logger.error(f"Writer thread failed to persist a record: {e}")
                 finally:
                     writer_queue.task_done()
+        
         if cleaned_fp is not None:
             try:
                 cleaned_fp.close()

@@ -46,7 +46,8 @@ class ResultsAnalyzer:
         
         self.unique_authors: set[str] = set()
         self.unique_collections: set[str] = set()
-        self.unique_hubs: set[int] = set()
+        self.unique_groups: set[int] = set()
+        self.real_hub_ids: set[int] = set()
         self.author_counts: Counter[str] = Counter()
         self.collection_counts: Counter[str] = Counter()
         self.hub_counts: Counter[int] = Counter()
@@ -55,16 +56,12 @@ class ResultsAnalyzer:
         self.title_counts: Counter[str] = Counter()
         self.page_id_counts: Counter[int] = Counter()
 
-        self.real_hubs: set[int] = set()
-
     def analyze(self):
         """Lance le processus d'analyse et affiche le rapport final."""
         print(f"[*] Début de l'analyse de {self.filepath}...")
         
         for poem in iter_jsonl(self.filepath):
             self._process_poem(poem)
-
-        self._post_process_analysis()
         
         print("\n[*] Analyse terminée. Génération du rapport...")
         self._print_report()
@@ -80,8 +77,12 @@ class ResultsAnalyzer:
         if metadata.get("publication_date"): self.completeness_counters["date"] += 1
         if metadata.get("publisher"): self.completeness_counters["publisher"] += 1
         if metadata.get("translator"): self.completeness_counters["translator"] += 1
-        if metadata.get("license_name"): self.completeness_counters["license"] += 1
-        if poem.get("hub_title"): self.completeness_counters["in_hub"] += 1
+        
+        if poem.get("hub_title") is not None:
+            self.completeness_counters["in_hub"] += 1
+            hub_page_id = poem.get("hub_page_id")
+            if hub_page_id is not None:
+                self.real_hub_ids.add(hub_page_id)
             
         author = metadata.get("author")
         if author:
@@ -95,7 +96,7 @@ class ResultsAnalyzer:
 
         hub_id = poem.get("hub_page_id")
         if hub_id is not None:
-            self.unique_hubs.add(hub_id)
+            self.unique_groups.add(hub_id)
             self.hub_counts[hub_id] += 1
             
         if poem.get("checksum_sha256"): self.checksum_counts[poem["checksum_sha256"]] += 1
@@ -105,27 +106,22 @@ class ResultsAnalyzer:
         if len(poem.get("normalized_text", "")) < 20:
             self.poems_with_short_text += 1
 
-    def _post_process_analysis(self):
-        """Effectue des calculs finaux après avoir parcouru tout le fichier."""
-        for hub_id, count in self.hub_counts.items():
-            if count > 1:
-                self.real_hubs.add(hub_id)
-        self.completeness_counters["in_hub"] = len(self.real_hubs)
-                
     def _print_report(self):
         """Affiche le rapport statistique final de manière structurée."""
         print("\n" + "="*80)
         print(" " * 25 + "ANALYSE DU CORPUS DE POÈMES")
         print("="*80)
 
+        # --- Section 1: Statistiques Globales ---
         print("\n--- Statistiques Globales ---\n")
         print(f"{'Total des poèmes analysés:':<45} {self.total_poems}")
         print(f"{'Nombre d\'auteurs uniques:':<45} {len(self.unique_authors)}")
         print(f"{'Nombre de recueils uniques:':<45} {len(self.unique_collections)}")
-        print(f"{'Nombre de groupes de poèmes (hubs):':<45} {len(self.unique_hubs)}")
-        print(f"{'  ↳ Hubs multi-versions réels (>1 poème):':<45} {len(self.real_hubs)}")
-        print(f"{'  ↳ Poèmes autonomes (1 poème par groupe):':<45} {len(self.unique_hubs) - len(self.real_hubs)}")
+        print(f"{'Nombre de groupes de poèmes (par hub_page_id):':<45} {len(self.unique_groups)}")
+        print(f"{'  ↳ Hubs multi-versions réels:':<45} {len(self.real_hub_ids)}")
+        print(f"{'  ↳ Poèmes autonomes (groupes de 1):':<45} {len(self.unique_groups) - len(self.real_hub_ids)}")
 
+        # --- Section 2: Qualité et Complétude des Données ---
         print("\n--- Qualité et Complétude des Données ---\n")
         
         def print_completeness(key: str, label: str):
@@ -139,11 +135,11 @@ class ResultsAnalyzer:
         print_completeness("date", "Poèmes avec une date de publication:")
         print_completeness("publisher", "Poèmes avec un éditeur identifié:")
         print_completeness("translator", "Poèmes avec un traducteur identifié:")
-        print_completeness("license", "Poèmes avec une licence identifiée:")
         
         print("\n--- Problèmes Potentiels Détectés ---\n")
         print(f"{'Poèmes avec texte très court (<20 caractères):':<45} {self.poems_with_short_text}")
 
+        # --- Section 3: Analyse des Doublons ---
         print("\n--- Analyse des Doublons ---\n")
         
         def print_duplicates(counter: Counter, label: str, note: str = ""):
@@ -158,6 +154,7 @@ class ResultsAnalyzer:
         print_duplicates(self.title_counts, "Basé sur le titre du poème (nettoyé)")
         print_duplicates(self.page_id_counts, "Basé sur le page_id", "Devrait être 0. Indique une erreur dans le scraping si > 0")
 
+        # --- Section 4: Classements ---
         print("\n--- Classements (Top 10) ---\n")
         print("Auteurs les plus prolifiques :")
         for author, count in self.author_counts.most_common(10):
@@ -168,7 +165,7 @@ class ResultsAnalyzer:
             print(f"  - {collection}: {count} poèmes")
 
         print("\nHubs avec le plus de versions :")
-        real_hub_counts = {k: v for k, v in self.hub_counts.items() if v > 1}
+        real_hub_counts = {hub_id: self.hub_counts[hub_id] for hub_id in self.real_hub_ids}
         top_hubs = Counter(real_hub_counts).most_common(10)
         
         if top_hubs:

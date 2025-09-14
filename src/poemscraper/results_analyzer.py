@@ -110,6 +110,7 @@ class ResultsAnalyzer:
         for hub_id, count in self.hub_counts.items():
             if count > 1:
                 self.real_hubs.add(hub_id)
+        self.completeness_counters["in_hub"] = len(self.real_hubs)
                 
     def _print_report(self):
         """Affiche le rapport statistique final de manière structurée."""
@@ -134,11 +135,11 @@ class ResultsAnalyzer:
 
         print_completeness("author", "Poèmes avec un auteur identifié:")
         print_completeness("collection", "Poèmes avec un recueil source identifié:")
+        print_completeness("in_hub", "Poèmes appartenant à un hub multi-versions:")
         print_completeness("date", "Poèmes avec une date de publication:")
         print_completeness("publisher", "Poèmes avec un éditeur identifié:")
         print_completeness("translator", "Poèmes avec un traducteur identifié:")
         print_completeness("license", "Poèmes avec une licence identifiée:")
-        print_completeness("in_hub", "Poèmes appartenant à un hub multi-versions:")
         
         print("\n--- Problèmes Potentiels Détectés ---\n")
         print(f"{'Poèmes avec texte très court (<20 caractères):':<45} {self.poems_with_short_text}")

@@ -40,20 +40,21 @@ class ResultsAnalyzer:
     def __init__(self, filepath: Path):
         self.filepath = filepath
         self.total_poems = 0
-        self.poems_with_author = 0
-        self.poems_with_collection = 0
-        self.poems_with_date = 0
         self.poems_with_short_text = 0
+        
+        self.completeness_counters: Counter[str] = Counter()
         
         self.unique_authors: set[str] = set()
         self.unique_collections: set[str] = set()
         self.unique_hubs: set[int] = set()
-        
         self.author_counts: Counter[str] = Counter()
         self.collection_counts: Counter[str] = Counter()
         self.hub_counts: Counter[int] = Counter()
-        self.checksum_counts: Counter[str] = Counter()
         
+        self.checksum_counts: Counter[str] = Counter()
+        self.title_counts: Counter[str] = Counter()
+        self.page_id_counts: Counter[int] = Counter()
+
         self.real_hubs: set[int] = set()
 
     def analyze(self):
@@ -65,7 +66,7 @@ class ResultsAnalyzer:
 
         self._post_process_analysis()
         
-        print("[*] Analyse terminée. Génération du rapport...")
+        print("\n[*] Analyse terminée. Génération du rapport...")
         self._print_report()
 
     def _process_poem(self, poem: dict[str, Any]):
@@ -73,29 +74,33 @@ class ResultsAnalyzer:
         self.total_poems += 1
         
         metadata = poem.get("metadata", {})
+        
+        if metadata.get("author"): self.completeness_counters["author"] += 1
+        if metadata.get("source_collection"): self.completeness_counters["collection"] += 1
+        if metadata.get("publication_date"): self.completeness_counters["date"] += 1
+        if metadata.get("publisher"): self.completeness_counters["publisher"] += 1
+        if metadata.get("translator"): self.completeness_counters["translator"] += 1
+        if metadata.get("license_name"): self.completeness_counters["license"] += 1
+        if poem.get("hub_title"): self.completeness_counters["in_hub"] += 1
+            
         author = metadata.get("author")
         if author:
-            self.poems_with_author += 1
             self.unique_authors.add(author)
             self.author_counts[author] += 1
             
         collection = metadata.get("source_collection")
         if collection:
-            self.poems_with_collection += 1
             self.unique_collections.add(collection)
             self.collection_counts[collection] += 1
-            
-        if metadata.get("publication_date"):
-            self.poems_with_date += 1
 
         hub_id = poem.get("hub_page_id")
         if hub_id is not None:
             self.unique_hubs.add(hub_id)
             self.hub_counts[hub_id] += 1
             
-        checksum = poem.get("checksum_sha256")
-        if checksum:
-            self.checksum_counts[checksum] += 1
+        if poem.get("checksum_sha256"): self.checksum_counts[poem["checksum_sha256"]] += 1
+        if poem.get("title"): self.title_counts[poem["title"]] += 1
+        if poem.get("page_id"): self.page_id_counts[poem["page_id"]] += 1
             
         if len(poem.get("normalized_text", "")) < 20:
             self.poems_with_short_text += 1
@@ -116,28 +121,41 @@ class ResultsAnalyzer:
         print(f"{'Total des poèmes analysés:':<45} {self.total_poems}")
         print(f"{'Nombre d\'auteurs uniques:':<45} {len(self.unique_authors)}")
         print(f"{'Nombre de recueils uniques:':<45} {len(self.unique_collections)}")
-        print(f"{'Nombre de hubs uniques (groupes de poèmes):':<45} {len(self.unique_hubs)}")
+        print(f"{'Nombre de groupes de poèmes (hubs):':<45} {len(self.unique_hubs)}")
         print(f"{'  ↳ Hubs multi-versions réels (>1 poème):':<45} {len(self.real_hubs)}")
-        print(f"{'  ↳ Poèmes autonomes (agissant comme leur propre hub):':<45} {len(self.unique_hubs) - len(self.real_hubs)}")
+        print(f"{'  ↳ Poèmes autonomes (1 poème par groupe):':<45} {len(self.unique_hubs) - len(self.real_hubs)}")
 
         print("\n--- Qualité et Complétude des Données ---\n")
-        author_completeness = (self.poems_with_author / self.total_poems * 100) if self.total_poems else 0
-        collection_completeness = (self.poems_with_collection / self.total_poems * 100) if self.total_poems else 0
-        date_completeness = (self.poems_with_date / self.total_poems * 100) if self.total_poems else 0
         
-        print(f"{'Poèmes avec un auteur identifié:':<45} {self.poems_with_author} ({author_completeness:.2f}%)")
-        print(f"{'Poèmes avec un recueil source identifié:':<45} {self.poems_with_collection} ({collection_completeness:.2f}%)")
-        print(f"{'Poèmes avec une date de publication:':<45} {self.poems_with_date} ({date_completeness:.2f}%)")
+        def print_completeness(key: str, label: str):
+            count = self.completeness_counters[key]
+            percentage = (count / self.total_poems * 100) if self.total_poems else 0
+            print(f"{label:<45} {count} ({percentage:.2f}%)")
+
+        print_completeness("author", "Poèmes avec un auteur identifié:")
+        print_completeness("collection", "Poèmes avec un recueil source identifié:")
+        print_completeness("date", "Poèmes avec une date de publication:")
+        print_completeness("publisher", "Poèmes avec un éditeur identifié:")
+        print_completeness("translator", "Poèmes avec un traducteur identifié:")
+        print_completeness("license", "Poèmes avec une licence identifiée:")
+        print_completeness("in_hub", "Poèmes appartenant à un hub multi-versions:")
         
         print("\n--- Problèmes Potentiels Détectés ---\n")
         print(f"{'Poèmes avec texte très court (<20 caractères):':<45} {self.poems_with_short_text}")
 
         print("\n--- Analyse des Doublons ---\n")
-        exact_duplicates = sum(count - 1 for count in self.checksum_counts.values() if count > 1)
-        pages_with_duplicates = len([c for c in self.checksum_counts.values() if c > 1])
-        print("Basé sur le checksum (contenu wikitext identique) :")
-        print(f"{'  ↳ Nombre total de poèmes dupliqués:':<45} {exact_duplicates}")
-        print(f"{'  ↳ Nombre de contenus uniques ayant des doublons:':<45} {pages_with_duplicates}")
+        
+        def print_duplicates(counter: Counter, label: str, note: str = ""):
+            duplicates = sum(count - 1 for count in counter.values() if count > 1)
+            items_with_duplicates = len([c for c in counter.values() if c > 1])
+            print(f"{label:<45}")
+            if note: print(f"  ({note})")
+            print(f"{'  ↳ Nombre total d\'entrées dupliquées:':<45} {duplicates}")
+            print(f"{'  ↳ Nombre d\'items uniques ayant des doublons:':<45} {items_with_duplicates}")
+
+        print_duplicates(self.checksum_counts, "Basé sur le checksum du wikitext", "Contenu brut strictement identique")
+        print_duplicates(self.title_counts, "Basé sur le titre du poème (nettoyé)")
+        print_duplicates(self.page_id_counts, "Basé sur le page_id", "Devrait être 0. Indique une erreur dans le scraping si > 0")
 
         print("\n--- Classements (Top 10) ---\n")
         print("Auteurs les plus prolifiques :")

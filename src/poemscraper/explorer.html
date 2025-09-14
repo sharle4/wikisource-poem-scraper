@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full bg-slate-50 dark:bg-slate-900">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Explorateur de Corpus Poétique</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .poem-text { font-family: 'Merriweather', serif; white-space: pre-line; }
+        .view { display: none; }
+        .view.active { display: block; }
+        #drop-zone.drag-over { border-color: #3b82f6; background-color: #eff6ff; }
+        .dark #drop-zone.drag-over { border-color: #60a5fa; background-color: #1e293b; }
+        .list-item { transition: background-color 0.2s ease-in-out; }
+        .list-item:hover { background-color: #f3f4f6; }
+        .dark .list-item:hover { background-color: #1f2937; }
+    </style>
+</head>
+<body class="h-full text-slate-800 dark:text-slate-200 antialiased">
+
+    <div id="app" class="flex flex-col h-full">
+        <!-- ===== Header ===== -->
+        <header class="bg-white dark:bg-slate-800/50 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700 p-4 shadow-sm sticky top-0 z-10">
+            <div class="max-w-7xl mx-auto flex justify-between items-center">
+                <h1 class="text-xl font-bold text-slate-900 dark:text-white">Explorateur de Corpus</h1>
+                <nav id="breadcrumbs" class="text-sm text-slate-500 dark:text-slate-400 hidden"></nav>
+            </div>
+        </header>
+
+        <!-- ===== Main Content ===== -->
+        <main class="flex-grow overflow-y-auto p-4 md:p-8">
+            <div class="max-w-7xl mx-auto">
+                <!-- Vues de l'application -->
+                <div id="upload-view" class="view active">
+                    <!-- ... Upload UI ... -->
+                </div>
+                <div id="home-view" class="view">
+                    <!-- ... Home menu ... -->
+                </div>
+                <div id="list-view" class="view">
+                    <!-- ... Content for lists of authors, collections, etc. ... -->
+                </div>
+                <div id="poem-view" class="view">
+                    <!-- ... Content for displaying a single poem ... -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ===== Templates ===== -->
+    <template id="upload-template">
+        <div class="text-center">
+            <h2 class="text-3xl font-bold text-slate-900 dark:text-white mb-2">Bienvenue</h2>
+            <p class="text-lg text-slate-600 dark:text-slate-400 mb-8">Chargez un fichier <code class="bg-slate-200 dark:bg-slate-700 text-sm px-2 py-1 rounded-md">poems.cleaned.jsonl.gz</code> pour commencer.</p>
+            <div id="drop-zone" class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-12 cursor-pointer max-w-2xl mx-auto">
+                <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-4-4V7a4 4 0 014-4h5l4 4h2a4 4 0 014 4v5a4 4 0 01-4 4H7z"></path></svg>
+                <p class="mt-2 font-semibold">Déposez votre fichier ici ou cliquez pour sélectionner</p>
+                <input type="file" id="file-input" class="hidden" accept=".gz,.jsonl">
+            </div>
+            <div id="loading-feedback" class="mt-6 text-slate-500 dark:text-slate-400"></div>
+        </div>
+    </template>
+
+    <template id="home-card-template">
+        <a href="#" class="block bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+            <div class="flex items-center space-x-4">
+                <div class="p-3 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg">
+                    <svg class="w-6 h-6 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"></svg>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold text-slate-900 dark:text-white"></h3>
+                    <p class="text-slate-500 dark:text-slate-400"></p>
+                </div>
+            </div>
+        </a>
+    </template>
+    
+    <template id="list-item-template">
+         <a href="#" class="list-item flex items-start justify-between p-4 border-b border-slate-200 dark:border-slate-700 last:border-b-0">
+            <div class="flex-grow">
+                <p class="font-semibold text-indigo-600 dark:text-indigo-400"></p>
+                <div class="text-sm text-slate-500 dark:text-slate-400 space-x-4"></div>
+            </div>
+            <div class="flex-shrink-0 ml-4">
+                 <svg class="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+            </div>
+        </a>
+    </template>
+
+
+    <!-- ===== Worker script ===== -->
+    <script id="data-worker" type="javascript/worker">
+        // Ce worker traite les données sans geler l'interface utilisateur.
+        self.onmessage = (event) => {
+            const fileContent = event.data;
+            
+            try {
+                postMessage({ status: 'parsing' });
+                const poems = fileContent.trim().split('\n').map(line => JSON.parse(line));
+                
+                postMessage({ status: 'indexing' });
+
+                const db = {
+                    poems: new Map(),
+                    authors: new Map(),
+                    collections: new Map(),
+                    hubs: new Map()
+                };
+
+                // Étape 1: Initialiser toutes les entités
+                poems.forEach(p => {
+                    db.poems.set(p.page_id, p);
+                    const authorName = p.metadata.author || 'Auteur Inconnu';
+                    if (!db.authors.has(authorName)) {
+                        db.authors.set(authorName, {
+                            name: authorName,
+                            collections: new Map(),
+                            hubsWithoutCollection: new Map(),
+                            poemsWithoutCollectionOrHub: []
+                        });
+                    }
+                    const collectionName = p.metadata.source_collection;
+                    if (collectionName && !db.collections.has(collectionName)) {
+                        db.collections.set(collectionName, { name: collectionName, poems: [] });
+                    }
+                    if (p.hub_title && !db.hubs.has(p.hub_page_id)) {
+                        db.hubs.set(p.hub_page_id, {
+                            id: p.hub_page_id,
+                            title: p.hub_title,
+                            versions: []
+                        });
+                    }
+                });
+
+                // Étape 2: Lier les poèmes à leurs parents
+                for (const poem of poems) {
+                    const author = db.authors.get(poem.metadata.author || 'Auteur Inconnu');
+                    const collectionName = poem.metadata.source_collection;
+                    const hubId = poem.hub_title ? poem.hub_page_id : null;
+                    
+                    if(collectionName) db.collections.get(collectionName).poems.push(poem);
+                    if(hubId) db.hubs.get(hubId).versions.push(poem);
+
+                    if (collectionName && db.collections.has(collectionName)) {
+                        const collection = db.collections.get(collectionName);
+                        if (!author.collections.has(collectionName)) {
+                            author.collections.set(collectionName, collection);
+                        }
+                    } else if (hubId && db.hubs.has(hubId)) {
+                        const hub = db.hubs.get(hubId);
+                        if (!author.hubsWithoutCollection.has(hubId)) {
+                            author.hubsWithoutCollection.set(hubId, hub);
+                        }
+                    } else {
+                        author.poemsWithoutCollectionOrHub.push(poem);
+                    }
+                }
+                
+                // Étape 3: Calculer les statistiques
+                for (const author of db.authors.values()) {
+                    const poemsInCollections = Array.from(author.collections.values()).reduce((acc, c) => acc + c.poems.length, 0);
+                    const poemsInHubs = Array.from(author.hubsWithoutCollection.values()).reduce((acc, h) => acc + h.versions.length, 0);
+                    const totalPoems = poemsInCollections + poemsInHubs + author.poemsWithoutCollectionOrHub.length;
+                    
+                    author.stats = {
+                        totalPoems: totalPoems,
+                        poemsWithoutCollection: poemsInHubs + author.poemsWithoutCollectionOrHub.length,
+                        totalRealHubs: author.hubsWithoutCollection.size,
+                        totalCollections: author.collections.size
+                    };
+                }
+
+                postMessage({ status: 'done', db });
+            } catch (error) {
+                postMessage({ status: 'error', error: error.message });
+            }
+        };
+    </script>
+
+    <!-- ===== Application script ===== -->
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const App = {
+            db: null,
+            views: {
+                upload: document.getElementById('upload-view'),
+                home: document.getElementById('home-view'),
+                list: document.getElementById('list-view'),
+                poem: document.getElementById('poem-view'),
+            },
+            breadcrumbsEl: document.getElementById('breadcrumbs'),
+
+            init() {
+                this.renderUploadView();
+                window.addEventListener('hashchange', () => this.router());
+                this.router();
+            },
+
+            // --- ROUTING & VIEW MANAGEMENT ---
+            router() {
+                const hash = window.location.hash || '#';
+                const [path, ...params] = hash.substring(1).split('/');
+                
+                this.updateBreadcrumbs(hash);
+
+                if (!this.db && path !== '') {
+                    window.location.hash = '#';
+                    return;
+                }
+
+                this.hideAllViews();
+                
+                switch (path) {
+                    case 'authors':
+                        this.views.list.classList.add('active');
+                        this.renderList('Auteurs', this.db.authors, this.renderAuthorListItem, p => p.name);
+                        break;
+                    case 'author':
+                        this.views.list.classList.add('active');
+                        this.renderAuthorDetail(decodeURIComponent(params[0]));
+                        break;
+                    case 'collections':
+                        this.views.list.classList.add('active');
+                        this.renderList('Recueils', this.db.collections, this.renderCollectionListItem, p => p.name);
+                        break;
+                    case 'collection':
+                        this.views.list.classList.add('active');
+                        this.renderCollectionDetail(decodeURIComponent(params[0]));
+                        break;
+                     case 'hubs':
+                        this.views.list.classList.add('active');
+                        this.renderList('Hubs Multi-versions', this.db.hubs, this.renderHubListItem, p => p.title);
+                        break;
+                    case 'hub':
+                        this.views.list.classList.add('active');
+                        this.renderHubDetail(parseInt(params[0]));
+                        break;
+                    case 'poems':
+                        this.views.list.classList.add('active');
+                        this.renderList('Tous les poèmes', this.db.poems, this.renderPoemListItem, p => p.title);
+                        break;
+                    case 'poem':
+                        this.views.poem.classList.add('active');
+                        this.renderPoemDetail(parseInt(params[0]));
+                        break;
+                    case 'home':
+                         this.views.home.classList.add('active');
+                         break;
+                    default:
+                        if (this.db) this.views.home.classList.add('active');
+                        else this.views.upload.classList.add('active');
+                }
+            },
+
+            hideAllViews() {
+                Object.values(this.views).forEach(v => v.classList.remove('active'));
+            },
+
+            // --- DATA LOADING ---
+            setupUploadEvents() {
+                const dropZone = document.getElementById('drop-zone');
+                const fileInput = document.getElementById('file-input');
+                const feedbackEl = document.getElementById('loading-feedback');
+
+                dropZone.addEventListener('click', () => fileInput.click());
+                fileInput.addEventListener('change', (e) => this.handleFile(e.target.files[0]));
+
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                }));
+                ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.add('drag-over')));
+                ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.remove('drag-over')));
+                
+                dropZone.addEventListener('drop', (e) => this.handleFile(e.dataTransfer.files[0]));
+            },
+
+            handleFile(file) {
+                if (!file) return;
+                const feedbackEl = document.getElementById('loading-feedback');
+                feedbackEl.textContent = 'Chargement du fichier...';
+                
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    feedbackEl.textContent = 'Décompression... (cela peut prendre un moment)';
+                    try {
+                        const compressed = new Uint8Array(event.target.result);
+                        const decompressed = pako.inflate(compressed, { to: 'string' });
+                        this.processData(decompressed);
+                    } catch (err) {
+                        feedbackEl.textContent = `Erreur de décompression: ${err.message}`;
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            },
+            
+            processData(fileContent) {
+                const workerScript = document.getElementById('data-worker').textContent;
+                const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
+                const worker = new Worker(URL.createObjectURL(workerBlob));
+                const feedbackEl = document.getElementById('loading-feedback');
+
+                worker.onmessage = (event) => {
+                    const { status, db, error } = event.data;
+                    switch (status) {
+                        case 'parsing':
+                            feedbackEl.textContent = 'Analyse des données JSON...';
+                            break;
+                        case 'indexing':
+                            feedbackEl.textContent = 'Création des index pour la navigation...';
+                            break;
+                        case 'done':
+                            this.db = {
+                                poems: db.poems,
+                                authors: new Map([...db.authors.entries()].sort((a,b) => a[0].localeCompare(b[0]))),
+                                collections: new Map([...db.collections.entries()].sort((a,b) => a[0].localeCompare(b[0]))),
+                                hubs: new Map([...db.hubs.entries()].sort((a,b) => a[1].title.localeCompare(b[1].title))),
+                            };
+                            this.renderHomeView();
+                            window.location.hash = '#home';
+                            break;
+                        case 'error':
+                            feedbackEl.textContent = `Erreur du worker: ${error}`;
+                            break;
+                    }
+                };
+                worker.postMessage(fileContent);
+            },
+            
+            // --- RENDERING VIEWS ---
+            renderUploadView() {
+                const template = document.getElementById('upload-template');
+                this.views.upload.innerHTML = '';
+                this.views.upload.appendChild(template.content.cloneNode(true));
+                this.setupUploadEvents();
+            },
+            
+            renderHomeView() {
+                this.views.home.innerHTML = '';
+                const grid = document.createElement('div');
+                grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6';
+
+                const homeCards = [
+                    { href: '#authors', title: 'Auteurs', count: `${this.db.authors.size} auteurs`, svgPath: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M15 21v-1a6 6 0 00-5.197-5.977' },
+                    { href: '#collections', title: 'Recueils', count: `${this.db.collections.size} recueils`, svgPath: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
+                    { href: '#hubs', title: 'Hubs Multi-versions', count: `${this.db.hubs.size} hubs`, svgPath: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z' },
+                    { href: '#poems', title: 'Tous les poèmes', count: `${this.db.poems.size} poèmes`, svgPath: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' }
+                ];
+
+                homeCards.forEach(card => {
+                    const template = document.getElementById('home-card-template');
+                    const node = template.content.cloneNode(true);
+                    const link = node.querySelector('a');
+                    link.href = card.href;
+                    link.querySelector('h3').textContent = card.title;
+                    link.querySelector('p').textContent = card.count;
+                    link.querySelector('svg').innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${card.svgPath}"/>`;
+                    grid.appendChild(node);
+                });
+                this.views.home.appendChild(grid);
+            },
+            
+            renderList(title, data, itemRenderer, sortFn) {
+                this.views.list.innerHTML = `
+                    <h2 class="text-2xl font-bold mb-4 text-slate-900 dark:text-white">${title}</h2>
+                    <div class="bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden">
+                        <div id="list-container"></div>
+                    </div>
+                `;
+                const container = document.getElementById('list-container');
+                const items = Array.from(data.values());
+                if (sortFn) items.sort((a, b) => sortFn(a).localeCompare(sortFn(b)));
+                
+                items.forEach(item => {
+                    container.appendChild(itemRenderer.call(this, item));
+                });
+            },
+            
+            // --- ITEM RENDERERS for lists ---
+            renderAuthorListItem(author) {
+                const template = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = template.querySelector('a');
+                link.href = `#author/${encodeURIComponent(author.name)}`;
+                link.querySelector('p').textContent = author.name;
+                const meta = link.querySelector('div');
+                meta.innerHTML = `<span>${author.stats.totalPoems} poèmes</span><span>${author.stats.totalCollections} recueils</span>`;
+                return template;
+            },
+            
+            renderCollectionListItem(collection) {
+                const template = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = template.querySelector('a');
+                link.href = `#collection/${encodeURIComponent(collection.name)}`;
+                link.querySelector('p').textContent = collection.name;
+                const meta = link.querySelector('div');
+                meta.innerHTML = `<span>${collection.poems.length} poèmes</span>`;
+                return template;
+            },
+
+            renderHubListItem(hub) {
+                const template = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = template.querySelector('a');
+                link.href = `#hub/${hub.id}`;
+                link.querySelector('p').textContent = hub.title;
+                const meta = link.querySelector('div');
+                meta.innerHTML = `<span>${hub.versions.length} versions</span>`;
+                return template;
+            },
+            
+            renderPoemListItem(poem) {
+                const template = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = template.querySelector('a');
+                link.href = `#poem/${poem.page_id}`;
+                link.querySelector('p').textContent = poem.title;
+                const meta = link.querySelector('div');
+                const author = poem.metadata.author || 'Inconnu';
+                const collection = poem.metadata.source_collection || 'Hors recueil';
+                meta.innerHTML = `<span>${author}</span><span>${collection}</span>`;
+                return template;
+            },
+            
+            // --- DETAIL VIEW RENDERERS ---
+            renderAuthorDetail(authorName) {
+                const author = this.db.authors.get(authorName);
+                if (!author) return this.views.list.innerHTML = '<p>Auteur non trouvé.</p>';
+                
+                this.views.list.innerHTML = `
+                    <div class="mb-6">
+                        <h2 class="text-3xl font-bold text-slate-900 dark:text-white">${author.name}</h2>
+                        <div class="mt-2 text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-6 gap-y-2">
+                            <span><strong>${author.stats.totalPoems}</strong> poèmes</span>
+                            <span><strong>${author.stats.totalCollections}</strong> recueils</span>
+                            <span><strong>${author.stats.totalRealHubs}</strong> hubs hors recueil</span>
+                            <span><strong>${author.stats.poemsWithoutCollection}</strong> poèmes hors recueil</span>
+                        </div>
+                    </div>
+                `;
+                
+                const container = this.views.list;
+
+                if (author.collections.size > 0) {
+                   container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Recueils</h3>`;
+                   const listEl = document.createElement('div');
+                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
+                   author.collections.forEach(c => listEl.appendChild(this.renderCollectionListItem(c)));
+                   container.appendChild(listEl);
+                }
+                 if (author.hubsWithoutCollection.size > 0) {
+                   container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Multi-versions (Hors Recueil)</h3>`;
+                   const listEl = document.createElement('div');
+                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
+                   author.hubsWithoutCollection.forEach(h => listEl.appendChild(this.renderHubListItem(h)));
+                   container.appendChild(listEl);
+                }
+                 if (author.poemsWithoutCollectionOrHub.length > 0) {
+                   container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Isolés</h3>`;
+                   const listEl = document.createElement('div');
+                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
+                   author.poemsWithoutCollectionOrHub.forEach(p => listEl.appendChild(this.renderPoemListItem(p)));
+                   container.appendChild(listEl);
+                }
+            },
+            
+            renderCollectionDetail(collectionName) {
+                const collection = this.db.collections.get(collectionName);
+                this.renderList(collection.name, collection.poems, this.renderPoemListItem, p => p.title);
+            },
+            
+            renderHubDetail(hubId) {
+                const hub = this.db.hubs.get(hubId);
+                this.renderList(hub.title, hub.versions, this.renderPoemListItem, p => p.title);
+            },
+            
+            renderPoemDetail(pageId) {
+                const poem = this.db.poems.get(pageId);
+                const meta = poem.metadata;
+                this.views.poem.innerHTML = `
+                    <div class="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-lg shadow-lg">
+                        <h2 class="text-3xl font-bold text-slate-900 dark:text-white font-serif">${poem.title}</h2>
+                        <p class="text-lg text-slate-500 dark:text-slate-400 mt-1 mb-6">par ${meta.author || 'Auteur inconnu'}</p>
+                        
+                        <div class="text-sm text-slate-600 dark:text-slate-300 border-t border-b border-slate-200 dark:border-slate-700 py-4 mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
+                            ${meta.source_collection ? `<div><strong class="block text-slate-500 dark:text-slate-400">Recueil</strong> ${meta.source_collection}</div>` : ''}
+                            ${meta.publication_date ? `<div><strong class="block text-slate-500 dark:text-slate-400">Publié en</strong> ${meta.publication_date}</div>` : ''}
+                             ${meta.publisher ? `<div><strong class="block text-slate-500 dark:text-slate-400">Éditeur</strong> ${meta.publisher}</div>` : ''}
+                             <div class="col-span-2 md:col-span-1"><strong class="block text-slate-500 dark:text-slate-400">Source</strong> <a href="${poem.wikisource_url}" target="_blank" class="text-indigo-600 dark:text-indigo-400 hover:underline">Wikisource</a></div>
+                        </div>
+
+                        <div class="poem-text text-lg leading-relaxed">
+                            ${poem.structure.stanzas.map(stanza => `<div>${stanza.join('<br>')}</div>`).join('<br><br>')}
+                        </div>
+                    </div>
+                `;
+            },
+            
+            // --- UI HELPERS ---
+            updateBreadcrumbs(hash) {
+                this.breadcrumbsEl.classList.remove('hidden');
+                const parts = hash.substring(1).split('/').map(decodeURIComponent);
+                let path = '#';
+                
+                const homeLink = `<a href="#" class="hover:text-indigo-600">Accueil</a>`;
+                if (hash === '#' || hash === '#home') {
+                    this.breadcrumbsEl.innerHTML = homeLink;
+                    return;
+                }
+
+                const links = parts.map((part, i) => {
+                    path += (i === 0 ? '' : '/') + encodeURIComponent(part);
+                    const isLast = i === parts.length - 1;
+                    const text = part.charAt(0).toUpperCase() + part.slice(1);
+                    const item = this.getBreadcrumbItem(parts[0], part);
+
+                    if (isLast) return `<span class="font-semibold text-slate-700 dark:text-slate-200">${item}</span>`;
+                    return `<a href="${path}" class="hover:text-indigo-600">${item}</a>`;
+                });
+                
+                this.breadcrumbsEl.innerHTML = `${homeLink} <span class="mx-2">/</span> ${links.join('<span class="mx-2">/</span>')}`;
+            },
+
+            getBreadcrumbItem(type, value) {
+                switch(type) {
+                    case 'author': return this.db.authors.get(value)?.name || value;
+                    case 'collection': return this.db.collections.get(value)?.name || value;
+                    case 'hub': return this.db.hubs.get(parseInt(value))?.title || value;
+                    case 'poem': return this.db.poems.get(parseInt(value))?.title || value;
+                    default: return value.charAt(0).toUpperCase() + value.slice(1);
+                }
+            }
+        };
+
+        App.init();
+    });
+    </script>
+
+</body>
+</html>

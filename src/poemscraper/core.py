@@ -5,7 +5,7 @@ import json
 import logging
 import queue
 import threading
-from typing import Set
+from typing import Set, Optional, Dict, Any
 from datetime import datetime, timezone
 
 import re
@@ -43,7 +43,7 @@ class ScraperOrchestrator:
         self.db_manager = DatabaseManager(self.db_path)
         self.processor = PoemProcessor()
         
-        self.tree_logger = None
+        self.tree_logger: Optional[HierarchicalLogger] = None
         if self.config.tree_log:
             tree_log_dir = self.config.output_dir / "logs" / "tree-logs"
             self.tree_logger = HierarchicalLogger(tree_log_dir)
@@ -69,8 +69,8 @@ class ScraperOrchestrator:
             self.processed_ids = await self.db_manager.get_all_processed_ids()
             logger.info(f"Resume mode: Loaded {len(self.processed_ids)} already processed page IDs.")
 
-        page_queue = asyncio.Queue()
-        writer_sync_queue = queue.Queue(maxsize=self.config.workers * 2)
+        page_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        writer_sync_queue: queue.Queue[Optional[PoemSchema]] = queue.Queue(maxsize=self.config.workers * 2)
 
         writer_thread = threading.Thread(
             target=self._sync_writer, args=(writer_sync_queue,), daemon=True
@@ -176,6 +176,7 @@ class ScraperOrchestrator:
                 page_info = queue_item['page_info']
                 parent_title = queue_item['parent_title']
                 author_cat = queue_item['author_cat']
+                hub_info = queue_item.get("hub_info")
                 page_id = page_info["pageid"]
                 page_title = page_info.get('title', 'N/A')
 
@@ -222,7 +223,7 @@ class ScraperOrchestrator:
 
                     if page_type == PageType.POEM:
                         try:
-                            poem_data = self.processor.process(page_data, soup, self.config.lang, wikicode)
+                            poem_data = self.processor.process(page_data, soup, self.config.lang, wikicode, hub_info=hub_info)
                             await self._writer_put(writer_queue, poem_data)
                         except PoemParsingError as e:
                             logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
@@ -234,7 +235,7 @@ class ScraperOrchestrator:
                         children_count = len(sub_titles)
                         self.log_manager.log_collection(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
                         if sub_titles:
-                            await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
+                            await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat, hub_info=hub_info)
                         self.skipped_counter += 1
 
                     elif page_type == PageType.MULTI_VERSION_HUB:
@@ -243,7 +244,8 @@ class ScraperOrchestrator:
                         children_count = len(sub_titles)
                         self.log_manager.log_hub(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
                         if sub_titles:
-                            await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat)
+                            new_hub_info = {"title": page_title, "page_id": final_page_id}
+                            await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat, hub_info=new_hub_info)
                         self.skipped_counter += 1
                     
                     else:
@@ -278,7 +280,7 @@ class ScraperOrchestrator:
                 await asyncio.sleep(delay)
                 attempt += 1
 
-    async def _writer_put(self, writer_queue: queue.Queue, item):
+    async def _writer_put(self, writer_queue: queue.Queue, item: PoemSchema):
         """Non-blocking put with backoff to avoid deadlocks if writer thread stalls temporarily."""
         while True:
             try:
@@ -290,7 +292,7 @@ class ScraperOrchestrator:
 
     async def _enqueue_new_titles(
         self, client: WikiAPIClient, queue: asyncio.Queue, titles: list[str], pbar: tqdm,
-        current_parent_title: str, author_cat: str
+        current_parent_title: str, author_cat: str, hub_info: Optional[dict] = None
     ):
         logger.debug(f"Resolving {len(titles)} titles from '{current_parent_title}'.")
         for i in range(0, len(titles), 50):
@@ -309,7 +311,8 @@ class ScraperOrchestrator:
                     await queue.put({
                         'page_info': p_info,
                         'parent_title': current_parent_title,
-                        'author_cat': author_cat
+                        'author_cat': author_cat,
+                        'hub_info': hub_info
                     })
 
     def _sync_writer(self, writer_queue: queue.Queue):

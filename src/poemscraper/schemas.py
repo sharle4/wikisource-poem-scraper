@@ -51,6 +51,13 @@ class PoemSchema(BaseModel):
         ..., description="URL canonique complète vers la page du poème."
     )
 
+    hub_title: Optional[str] = Field(
+        None, description="Titre de la page 'hub' de versions multiples parente, si applicable."
+    )
+    hub_page_id: Optional[int] = Field(
+        None, description="ID de la page 'hub' de versions multiples parente, si applicable."
+    )
+
     metadata: PoemMetadata = Field(..., description="Toutes les métadonnées extraites.")
     structure: PoemStructure = Field(..., description="Structure parsée du poème.")
 

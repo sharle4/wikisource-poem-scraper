@@ -1,6 +1,7 @@
 import hashlib
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 import mwparserfromhell
 from bs4 import BeautifulSoup, Tag
@@ -23,6 +24,7 @@ class PoemProcessor:
         soup: BeautifulSoup,
         lang: str,
         wikicode: mwparserfromhell.wikicode.Wikicode,
+        hub_info: Optional[dict] = None,
     ) -> PoemSchema:
         """Méthode de traitement principale pour une seule page."""
         wikitext = page_data["revisions"][0]["content"]
@@ -48,6 +50,9 @@ class PoemProcessor:
         metadata_obj = PoemMetadata(**final_meta_dict)
         normalized_text = PoemParser.create_normalized_text(structure)
 
+        hub_title = hub_info.get("title") if hub_info else None
+        hub_page_id = hub_info.get("page_id") if hub_info else None
+
         poem_obj = PoemSchema(
             page_id=page_data["pageid"],
             revision_id=page_data["revisions"][0]["revid"],
@@ -63,6 +68,8 @@ class PoemProcessor:
             normalized_text=normalized_text,
             checksum_sha256=hashlib.sha256(wikitext.encode("utf-8")).hexdigest(),
             extraction_timestamp=datetime.now(timezone.utc),
+            hub_title=hub_title,
+            hub_page_id=hub_page_id,
         )
         return poem_obj
 

@@ -1,7 +1,7 @@
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Set
+from typing import Set, Optional
 
 import aiosqlite
 
@@ -22,7 +22,7 @@ class DatabaseManager:
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
-        self.conn: aiosqlite.Connection | None = None
+        self.conn: Optional[aiosqlite.Connection] = None
 
     async def initialize(self):
         """Initialise la connexion asynchrone et crée la table si elle n'existe pas."""
@@ -38,7 +38,9 @@ class DatabaseManager:
                     source_collection TEXT,
                     language TEXT NOT NULL,
                     checksum_sha256 TEXT NOT NULL,
-                    extraction_timestamp TEXT NOT NULL
+                    extraction_timestamp TEXT NOT NULL,
+                    hub_title TEXT,
+                    hub_page_id INTEGER
                 )
             """
             )
@@ -53,6 +55,7 @@ class DatabaseManager:
         if not self.conn:
             await self.initialize()
 
+        assert self.conn is not None
         async with self.conn.execute("SELECT page_id FROM poems") as cursor:
             rows = await cursor.fetchall()
             return {row[0] for row in rows}
@@ -66,9 +69,10 @@ class DatabaseManager:
             """
             INSERT OR IGNORE INTO poems (
                 page_id, title, author, publication_date, source_collection,
-                language, checksum_sha256, extraction_timestamp
+                language, checksum_sha256, extraction_timestamp,
+                hub_title, hub_page_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 poem.page_id,
@@ -79,6 +83,8 @@ class DatabaseManager:
                 poem.language,
                 poem.checksum_sha256,
                 poem.extraction_timestamp.isoformat(),
+                poem.hub_title,
+                poem.hub_page_id,
             ),
         )
 

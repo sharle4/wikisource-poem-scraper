@@ -51,10 +51,10 @@ class PoemProcessor:
         normalized_text = PoemParser.create_normalized_text(structure)
 
         if hub_info:
-            hub_title = hub_info["title"]
-            hub_page_id = hub_info["page_id"]
+            hub_title = hub_info.get("title")
+            hub_page_id = hub_info.get("page_id")
         else:
-            hub_title = page_data["title"]
+            hub_title = None
             hub_page_id = page_data["pageid"]
 
         poem_obj = PoemSchema(

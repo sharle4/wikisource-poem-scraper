@@ -39,7 +39,7 @@ class DatabaseManager:
                     language TEXT NOT NULL,
                     checksum_sha256 TEXT NOT NULL,
                     extraction_timestamp TEXT NOT NULL,
-                    hub_title TEXT NOT NULL,
+                    hub_title TEXT,
                     hub_page_id INTEGER NOT NULL
                 )
             """

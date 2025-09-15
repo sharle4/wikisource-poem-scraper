@@ -53,7 +53,7 @@
         </main>
     </div>
 
-    <!-- ===== Templates ===== -->
+    <!-- ===== Templates (pour le clonage) ===== -->
     <template id="upload-template">
         <div class="text-center">
             <h2 class="text-3xl font-bold text-slate-900 dark:text-white mb-2">Bienvenue</h2>
@@ -173,7 +173,7 @@
             controlsView: document.getElementById('controls-view'),
             breadcrumbsEl: document.getElementById('breadcrumbs'),
             
-            // --- STATE MANAGEMENT ---
+            // --- State Management ---
             viewStates: {
                 authors: { query: '', sortKey: 'name', sortOrder: 'asc' },
                 collections: { query: '', sortKey: 'name', sortOrder: 'asc' },
@@ -210,13 +210,37 @@
                 }
 
                 switch (path) {
-                    case 'authors': this.renderList(path, 'Auteurs', this.db.authors, this.renderAuthorListItem); break;
+                    case 'authors':
+                        this.renderList(
+                            path, 'Auteurs', this.db.authors, this.renderAuthorListItem,
+                            [{key: 'name', label: 'Nom'}, {key: 'totalPoems', label: 'Nb. poèmes'}],
+                            'name'
+                        );
+                        break;
                     case 'author': this.renderAuthorDetail(decodeURIComponent(params[0])); break;
-                    case 'collections': this.renderList(path, 'Recueils', this.db.collections, this.renderCollectionListItem); break;
+                    case 'collections':
+                        this.renderList(
+                            path, 'Recueils', this.db.collections, this.renderCollectionListItem,
+                            [{key: 'name', label: 'Nom'}, {key: 'poemCount', label: 'Nb. poèmes'}],
+                            'name'
+                        );
+                        break;
                     case 'collection': this.renderCollectionDetail(decodeURIComponent(params[0])); break;
-                    case 'hubs': this.renderList(path, 'Hubs Multi-versions', this.db.hubs, this.renderHubListItem); break;
+                    case 'hubs':
+                        this.renderList(
+                            path, 'Hubs Multi-versions', this.db.hubs, this.renderHubListItem,
+                            [{key: 'title', label: 'Titre'}, {key: 'versionCount', label: 'Nb. versions'}],
+                            'title'
+                        );
+                        break;
                     case 'hub': this.renderHubDetail(parseInt(params[0])); break;
-                    case 'poems': this.renderList(path, 'Tous les poèmes', this.db.poems, this.renderPoemListItem); break;
+                    case 'poems':
+                        this.renderList(
+                            path, 'Tous les poèmes', this.db.poems, this.renderPoemListItem,
+                            [{key: 'title', label: 'Titre'}, {key: 'author', label: 'Auteur'}, {key: 'publication_date', label: 'Date'}],
+                            'title'
+                        );
+                        break;
                     case 'poem': this.views.poem.classList.add('active'); this.renderPoemDetail(parseInt(params[0])); break;
                     case 'home': this.views.home.classList.add('active'); break;
                     default:
@@ -300,7 +324,6 @@
 
                 const state = this.viewStates[viewType];
 
-                // Configurer le champ de recherche
                 const filterInput = controlsContainer.querySelector('#filter-input');
                 filterInput.value = state.query;
                 filterInput.addEventListener('input', (e) => {
@@ -308,7 +331,6 @@
                     this.router();
                 });
                 
-                // Configurer le menu de tri
                 const sortBySelect = controlsContainer.querySelector('#sort-by');
                 sortBySelect.innerHTML = '';
                 sortOptions.forEach(opt => {
@@ -323,7 +345,6 @@
                     this.router();
                 });
                 
-                // Configurer l'ordre de tri
                 const sortOrderSelect = controlsContainer.querySelector('#sort-order');
                 sortOrderSelect.value = state.sortOrder;
                 sortOrderSelect.addEventListener('change', (e) => {
@@ -336,18 +357,15 @@
                 const state = this.viewStates[viewType];
                 const query = state.query.toLowerCase();
 
-                // 1. Filtrer
                 if (query) {
                     items = items.filter(item => (item[searchKey] || '').toLowerCase().includes(query));
                 }
 
-                // 2. Trier
                 const sortKey = state.sortKey;
                 const sortOrder = state.sortOrder === 'asc' ? 1 : -1;
                 
                 items.sort((a, b) => {
                     let valA, valB;
-                    // Logique pour obtenir la valeur de tri
                     switch (sortKey) {
                         case 'totalPoems': valA = a.stats.totalPoems; valB = b.stats.totalPoems; break;
                         case 'totalCollections': valA = a.stats.totalCollections; valB = b.stats.totalCollections; break;
@@ -419,7 +437,7 @@
                 });
             },
             
-            // --- ITEM RENDERERS (LISTS) ---
+            // --- ITEM RENDERERS for lists ---
             renderAuthorListItem(author) {
                 const template = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = template.querySelector('a');
@@ -507,11 +525,8 @@
             renderCollectionDetail(collectionName) {
                 const collection = this.db.collections.get(collectionName);
                 if (!collection) { this.views.list.innerHTML = '<p>Recueil non trouvé.</p>'; return; }
-                const sortOptions = [
-                    { key: 'title', label: 'Titre' },
-                    { key: 'publication_date', label: 'Date' }
-                ];
-                this.renderList('collection', collection.name, collection.poems, this.renderPoemListItem, sortOptions, 'title');
+                const sortOptions = [ { key: 'title', label: 'Titre' }, { key: 'publication_date', label: 'Date' }];
+                this.renderList( 'collection', collection.name, collection.poems, this.renderPoemListItem, sortOptions, 'title');
             },
             
             renderHubDetail(hubId) {
@@ -558,7 +573,6 @@
                 const links = parts.map((part, i) => {
                     path += (i === 0 ? '' : '/') + encodeURIComponent(part);
                     const isLast = i === parts.length - 1;
-                    const text = part.charAt(0).toUpperCase() + part.slice(1);
                     const item = this.getBreadcrumbItem(parts[0], part);
 
                     if (isLast) return `<span class="font-semibold text-slate-700 dark:text-slate-200">${item}</span>`;
@@ -584,4 +598,4 @@
     </script>
 
 </body>
-</html>s
+</html>

@@ -203,16 +203,18 @@
                     window.location.hash = '#';
                     return;
                 }
-                this.hideAllViews();
+                
+                Object.values(this.views).forEach(v => v.classList.remove('active'));
                 this.currentViewType = path;
                 
                 const listViews = ['authors', 'collections', 'hubs', 'poems', 'author', 'collection', 'hub'];
-                if(!listViews.includes(path)) {
-                    this.lastControlsViewType = null;
-                }
 
-                if(listViews.includes(path)) {
+                if (listViews.includes(path)) {
                     this.views.list.classList.add('active');
+                    this.controlsView.style.display = 'flex';
+                } else {
+                    this.controlsView.style.display = 'none';
+                    this.lastControlsViewType = null;
                 }
 
                 switch (path) {
@@ -241,11 +243,6 @@
                         if (this.db) this.views.home.classList.add('active');
                         else this.views.upload.classList.add('active');
                 }
-            },
-
-            hideAllViews() {
-                Object.values(this.views).forEach(v => v.classList.remove('active'));
-                this.controlsView.style.display = 'none';
             },
             
             setupUploadEvents() {
@@ -294,7 +291,6 @@
             },
 
             renderControls(viewType, sortOptions) {
-                this.controlsView.style.display = 'flex';
                 const controlsContainer = this.controlsView.querySelector('div');
                 controlsContainer.innerHTML = document.getElementById('controls-template').innerHTML;
                 const state = this.viewStates[viewType];
@@ -302,7 +298,7 @@
                 filterInput.value = state.query;
                 filterInput.addEventListener('input', (e) => {
                     state.query = e.target.value;
-                    this.router();
+                    this.updateListView(); 
                 });
                 const sortBySelect = controlsContainer.querySelector('#sort-by');
                 sortOptions.forEach(opt => {
@@ -314,14 +310,36 @@
                 sortBySelect.value = state.sortKey;
                 sortBySelect.addEventListener('change', (e) => {
                     state.sortKey = e.target.value;
-                    this.router();
+                    this.updateListView();
                 });
                 const sortOrderSelect = controlsContainer.querySelector('#sort-order');
                 sortOrderSelect.value = state.sortOrder;
                 sortOrderSelect.addEventListener('change', (e) => {
                     state.sortOrder = e.target.value;
-                    this.router();
+                    this.updateListView();
                 });
+            },
+            
+            updateListView() {
+                const [path, ...params] = (window.location.hash || '#').substring(1).split('/');
+                
+                const viewDetails = this.getViewDetails(path, params);
+                if (!viewDetails) return;
+
+                const { viewType, title, data, itemRenderer, searchKey } = viewDetails;
+                
+                let items = Array.from(data.values());
+                items = this.applyFilterAndSort(items, viewType, searchKey);
+                
+                document.querySelector('#list-view h2').textContent = `${title} (${items.length})`;
+                const container = document.getElementById('list-container');
+                container.innerHTML = ''; // Vider la liste actuelle
+                
+                if (items.length === 0) {
+                    container.innerHTML = `<p class="p-4 text-slate-500 italic">Aucun résultat trouvé.</p>`;
+                } else {
+                    items.forEach(item => container.appendChild(itemRenderer.call(this, item)));
+                }
             },
 
             applyFilterAndSort(items, viewType, searchKey) {
@@ -381,22 +399,32 @@
                     this.renderControls(viewType, sortOptions);
                     this.lastControlsViewType = viewType;
                 }
-                let items = Array.from(data.values());
-                items = this.applyFilterAndSort(items, viewType, searchKey);
+                
                 this.views.list.innerHTML = `
-                    <h2 class="text-2xl font-bold mb-4 text-slate-900 dark:text-white">${title} (${items.length})</h2>
+                    <h2 class="text-2xl font-bold mb-4 text-slate-900 dark:text-white"></h2>
                     <div class="bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden">
                         <div id="list-container"></div>
                     </div>
                 `;
-                const container = document.getElementById('list-container');
-                if (items.length === 0) {
-                    container.innerHTML = `<p class="p-4 text-slate-500 italic">Aucun résultat trouvé.</p>`;
-                } else {
-                    items.forEach(item => container.appendChild(itemRenderer.call(this, item)));
-                }
+                this.updateListView();
             },
             
+            getViewDetails(path, params) {
+                switch (path) {
+                    case 'authors': return { viewType: 'authors', title: 'Auteurs', data: this.db.authors, itemRenderer: this.renderAuthorListItem, searchKey: 'name'};
+                    case 'collections': return { viewType: 'collections', title: 'Recueils', data: this.db.collections, itemRenderer: this.renderCollectionListItem, searchKey: 'name'};
+                    case 'hubs': return { viewType: 'hubs', title: 'Hubs Multi-versions', data: this.db.hubs, itemRenderer: this.renderHubListItem, searchKey: 'title'};
+                    case 'poems': return { viewType: 'poems', title: 'Tous les poèmes', data: this.db.poems, itemRenderer: this.renderPoemListItem, searchKey: 'title'};
+                    case 'collection': 
+                        const collection = this.db.collections.get(decodeURIComponent(params[0]));
+                        return collection ? { viewType: 'collection', title: collection.name, data: collection.poems, itemRenderer: this.renderPoemListItem, searchKey: 'title' } : null;
+                    case 'hub':
+                        const hub = this.db.hubs.get(parseInt(params[0]));
+                        return hub ? { viewType: 'hub', title: hub.title, data: hub.versions, itemRenderer: this.renderPoemListItem, searchKey: 'title' } : null;
+                }
+                return null;
+            },
+
             renderAuthorListItem(author) {
                 const node = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = node.querySelector('a');
@@ -461,17 +489,13 @@
             },
             
             renderCollectionDetail(collectionName) {
-                const collection = this.db.collections.get(collectionName);
-                if (!collection) { this.views.list.innerHTML = '<p>Recueil non trouvé.</p>'; return; }
                 const sortOptions = [ { key: 'title', label: 'Titre' }, { key: 'publication_date', label: 'Date' }];
-                this.renderList( 'collection', collection.name, collection.poems, this.renderPoemListItem, sortOptions, 'title');
+                this.renderList( 'collection', null, null, null, sortOptions, null);
             },
             
             renderHubDetail(hubId) {
-                const hub = this.db.hubs.get(hubId);
-                if (!hub) { this.views.list.innerHTML = '<p>Hub non trouvé.</p>'; return; }
                 const sortOptions = [{ key: 'title', label: 'Titre' }];
-                this.renderList('hub', hub.title, hub.versions, this.renderPoemListItem, sortOptions, 'title');
+                this.renderList('hub', null, null, null, sortOptions, null);
             },
             
             renderPoemDetail(pageId) {

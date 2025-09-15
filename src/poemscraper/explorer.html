@@ -19,6 +19,8 @@
         .list-item { transition: background-color 0.2s ease-in-out; }
         .list-item:hover { background-color: #f3f4f6; }
         .dark .list-item:hover { background-color: #1f2937; }
+        #controls-view { display: none; }
+        #list-view.active ~ #controls-view { display: flex; }
     </style>
 </head>
 <body class="h-full text-slate-800 dark:text-slate-200 antialiased">
@@ -32,22 +34,21 @@
             </div>
         </header>
 
+        <!-- ===== Controls Bar ===== -->
+         <div id="controls-view" class="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700 p-3 sticky top-[65px] z-10">
+            <div class="max-w-7xl mx-auto flex items-center gap-4">
+                <!-- Les contrôles de filtre et de tri seront injectés ici -->
+            </div>
+        </div>
+
         <!-- ===== Main Content ===== -->
         <main class="flex-grow overflow-y-auto p-4 md:p-8">
             <div class="max-w-7xl mx-auto">
                 <!-- Vues de l'application -->
-                <div id="upload-view" class="view active">
-                    <!-- ... Upload UI ... -->
-                </div>
-                <div id="home-view" class="view">
-                    <!-- ... Home menu ... -->
-                </div>
-                <div id="list-view" class="view">
-                    <!-- ... Content for lists of authors, collections, etc. ... -->
-                </div>
-                <div id="poem-view" class="view">
-                    <!-- ... Content for displaying a single poem ... -->
-                </div>
+                <div id="upload-view" class="view active"></div>
+                <div id="home-view" class="view"></div>
+                <div id="list-view" class="view"></div>
+                <div id="poem-view" class="view"></div>
             </div>
         </main>
     </div>
@@ -84,101 +85,77 @@
          <a href="#" class="list-item flex items-start justify-between p-4 border-b border-slate-200 dark:border-slate-700 last:border-b-0">
             <div class="flex-grow">
                 <p class="font-semibold text-indigo-600 dark:text-indigo-400"></p>
-                <div class="text-sm text-slate-500 dark:text-slate-400 space-x-4"></div>
+                <div class="item-meta text-sm text-slate-500 dark:text-slate-400 space-x-4"></div>
             </div>
             <div class="flex-shrink-0 ml-4">
                  <svg class="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
             </div>
         </a>
     </template>
-
+    
+    <template id="controls-template">
+        <div class="flex-grow">
+            <input type="search" id="filter-input" placeholder="Rechercher..." class="w-full md:w-1/3 bg-slate-100 dark:bg-slate-700 p-2 rounded-md border border-slate-300 dark:border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+        </div>
+        <div class="flex items-center gap-2">
+            <label for="sort-by" class="text-sm font-medium">Trier par :</label>
+            <select id="sort-by" class="bg-slate-100 dark:bg-slate-700 p-2 rounded-md border border-slate-300 dark:border-slate-600"></select>
+        </div>
+        <div class="flex items-center gap-2">
+             <label for="sort-order" class="text-sm font-medium">Ordre :</label>
+            <select id="sort-order" class="bg-slate-100 dark:bg-slate-700 p-2 rounded-md border border-slate-300 dark:border-slate-600">
+                <option value="asc">Ascendant</option>
+                <option value="desc">Descendant</option>
+            </select>
+        </div>
+    </template>
 
     <!-- ===== Worker script ===== -->
     <script id="data-worker" type="javascript/worker">
-        // Ce worker traite les données sans geler l'interface utilisateur.
         self.onmessage = (event) => {
             const fileContent = event.data;
-            
             try {
                 postMessage({ status: 'parsing' });
                 const poems = fileContent.trim().split('\n').map(line => JSON.parse(line));
                 
                 postMessage({ status: 'indexing' });
-
-                const db = {
-                    poems: new Map(),
-                    authors: new Map(),
-                    collections: new Map(),
-                    hubs: new Map()
-                };
-
-                // Étape 1: Initialiser toutes les entités
+                const db = { poems: new Map(), authors: new Map(), collections: new Map(), hubs: new Map() };
                 poems.forEach(p => {
                     db.poems.set(p.page_id, p);
                     const authorName = p.metadata.author || 'Auteur Inconnu';
-                    if (!db.authors.has(authorName)) {
-                        db.authors.set(authorName, {
-                            name: authorName,
-                            collections: new Map(),
-                            hubsWithoutCollection: new Map(),
-                            poemsWithoutCollectionOrHub: []
-                        });
-                    }
+                    if (!db.authors.has(authorName)) db.authors.set(authorName, { name: authorName, collections: new Map(), hubsWithoutCollection: new Map(), poemsWithoutCollectionOrHub: [] });
                     const collectionName = p.metadata.source_collection;
-                    if (collectionName && !db.collections.has(collectionName)) {
-                        db.collections.set(collectionName, { name: collectionName, poems: [] });
-                    }
-                    if (p.hub_title && !db.hubs.has(p.hub_page_id)) {
-                        db.hubs.set(p.hub_page_id, {
-                            id: p.hub_page_id,
-                            title: p.hub_title,
-                            versions: []
-                        });
-                    }
+                    if (collectionName && !db.collections.has(collectionName)) db.collections.set(collectionName, { name: collectionName, poems: [] });
+                    if (p.hub_title && !db.hubs.has(p.hub_page_id)) db.hubs.set(p.hub_page_id, { id: p.hub_page_id, title: p.hub_title, versions: [] });
                 });
-
-                // Étape 2: Lier les poèmes à leurs parents
                 for (const poem of poems) {
                     const author = db.authors.get(poem.metadata.author || 'Auteur Inconnu');
                     const collectionName = poem.metadata.source_collection;
                     const hubId = poem.hub_title ? poem.hub_page_id : null;
-                    
                     if(collectionName && db.collections.has(collectionName)) db.collections.get(collectionName).poems.push(poem);
                     if(hubId && db.hubs.has(hubId)) db.hubs.get(hubId).versions.push(poem);
-
                     if (collectionName && db.collections.has(collectionName)) {
                         const collection = db.collections.get(collectionName);
-                        if (!author.collections.has(collectionName)) {
-                            author.collections.set(collectionName, collection);
-                        }
+                        if (!author.collections.has(collectionName)) author.collections.set(collectionName, collection);
                     } else if (hubId && db.hubs.has(hubId)) {
                         const hub = db.hubs.get(hubId);
-                        if (!author.hubsWithoutCollection.has(hubId)) {
-                            author.hubsWithoutCollection.set(hubId, hub);
-                        }
+                        if (!author.hubsWithoutCollection.has(hubId)) author.hubsWithoutCollection.set(hubId, hub);
                     } else {
                         author.poemsWithoutCollectionOrHub.push(poem);
                     }
                 }
-                
-                // Étape 3: Calculer les statistiques
                 for (const author of db.authors.values()) {
-                    const poemsInCollections = Array.from(author.collections.values()).reduce((acc, c) => acc + c.poems.length, 0);
-                    const poemsInHubs = Array.from(author.hubsWithoutCollection.values()).reduce((acc, h) => acc + h.versions.length, 0);
-                    const totalPoems = poemsInCollections + poemsInHubs + author.poemsWithoutCollectionOrHub.length;
-                    
+                    const poemsInCollections = [...author.collections.values()].reduce((acc, c) => acc + c.poems.length, 0);
+                    const poemsInHubs = [...author.hubsWithoutCollection.values()].reduce((acc, h) => acc + h.versions.length, 0);
                     author.stats = {
-                        totalPoems: totalPoems,
+                        totalPoems: poemsInCollections + poemsInHubs + author.poemsWithoutCollectionOrHub.length,
                         poemsWithoutCollection: poemsInHubs + author.poemsWithoutCollectionOrHub.length,
                         totalRealHubs: author.hubsWithoutCollection.size,
                         totalCollections: author.collections.size
                     };
                 }
-
                 postMessage({ status: 'done', db });
-            } catch (error) {
-                postMessage({ status: 'error', error: error.message });
-            }
+            } catch (error) { postMessage({ status: 'error', error: error.message }); }
         };
     </script>
 
@@ -193,7 +170,20 @@
                 list: document.getElementById('list-view'),
                 poem: document.getElementById('poem-view'),
             },
+            controlsView: document.getElementById('controls-view'),
             breadcrumbsEl: document.getElementById('breadcrumbs'),
+            
+            // --- STATE MANAGEMENT ---
+            viewStates: {
+                authors: { query: '', sortKey: 'name', sortOrder: 'asc' },
+                collections: { query: '', sortKey: 'name', sortOrder: 'asc' },
+                hubs: { query: '', sortKey: 'title', sortOrder: 'asc' },
+                poems: { query: '', sortKey: 'title', sortOrder: 'asc' },
+                author: { query: '', sortKey: 'name', sortOrder: 'asc' },
+                collection: { query: '', sortKey: 'title', sortOrder: 'asc' },
+                hub: { query: '', sortKey: 'title', sortOrder: 'asc' },
+            },
+            currentViewType: null,
 
             init() {
                 this.renderUploadView();
@@ -207,50 +197,28 @@
                 const [path, ...params] = hash.substring(1).split('/');
                 
                 this.updateBreadcrumbs(hash);
-
                 if (!this.db && path !== '') {
                     window.location.hash = '#';
                     return;
                 }
-
                 this.hideAllViews();
+                this.currentViewType = path;
                 
+                const listViews = ['authors', 'collections', 'hubs', 'poems', 'author', 'collection', 'hub'];
+                if(listViews.includes(path)) {
+                    this.views.list.classList.add('active');
+                }
+
                 switch (path) {
-                    case 'authors':
-                        this.views.list.classList.add('active');
-                        this.renderList('Auteurs', this.db.authors, this.renderAuthorListItem, p => p.name);
-                        break;
-                    case 'author':
-                        this.views.list.classList.add('active');
-                        this.renderAuthorDetail(decodeURIComponent(params[0]));
-                        break;
-                    case 'collections':
-                        this.views.list.classList.add('active');
-                        this.renderList('Recueils', this.db.collections, this.renderCollectionListItem, p => p.name);
-                        break;
-                    case 'collection':
-                        this.views.list.classList.add('active');
-                        this.renderCollectionDetail(decodeURIComponent(params[0]));
-                        break;
-                     case 'hubs':
-                        this.views.list.classList.add('active');
-                        this.renderList('Hubs Multi-versions', this.db.hubs, this.renderHubListItem, p => p.title);
-                        break;
-                    case 'hub':
-                        this.views.list.classList.add('active');
-                        this.renderHubDetail(parseInt(params[0]));
-                        break;
-                    case 'poems':
-                        this.views.list.classList.add('active');
-                        this.renderList('Tous les poèmes', this.db.poems, this.renderPoemListItem, p => p.title);
-                        break;
-                    case 'poem':
-                        this.views.poem.classList.add('active');
-                        this.renderPoemDetail(parseInt(params[0]));
-                        break;
-                    case 'home':
-                         this.views.home.classList.add('active');
-                         break;
+                    case 'authors': this.renderList(path, 'Auteurs', this.db.authors, this.renderAuthorListItem); break;
+                    case 'author': this.renderAuthorDetail(decodeURIComponent(params[0])); break;
+                    case 'collections': this.renderList(path, 'Recueils', this.db.collections, this.renderCollectionListItem); break;
+                    case 'collection': this.renderCollectionDetail(decodeURIComponent(params[0])); break;
+                    case 'hubs': this.renderList(path, 'Hubs Multi-versions', this.db.hubs, this.renderHubListItem); break;
+                    case 'hub': this.renderHubDetail(parseInt(params[0])); break;
+                    case 'poems': this.renderList(path, 'Tous les poèmes', this.db.poems, this.renderPoemListItem); break;
+                    case 'poem': this.views.poem.classList.add('active'); this.renderPoemDetail(parseInt(params[0])); break;
+                    case 'home': this.views.home.classList.add('active'); break;
                     default:
                         if (this.db) this.views.home.classList.add('active');
                         else this.views.upload.classList.add('active');
@@ -259,8 +227,9 @@
 
             hideAllViews() {
                 Object.values(this.views).forEach(v => v.classList.remove('active'));
+                this.controlsView.style.display = 'none';
             },
-
+            
             // --- DATA LOADING ---
             setupUploadEvents() {
                 const dropZone = document.getElementById('drop-zone');
@@ -308,31 +277,99 @@
                 worker.onmessage = (event) => {
                     const { status, db, error } = event.data;
                     switch (status) {
-                        case 'parsing':
-                            feedbackEl.textContent = 'Analyse des données JSON...';
-                            break;
-                        case 'indexing':
-                            feedbackEl.textContent = 'Création des index pour la navigation...';
-                            break;
+                        case 'parsing': feedbackEl.textContent = 'Analyse des données JSON...'; break;
+                        case 'indexing': feedbackEl.textContent = 'Création des index pour la navigation...'; break;
                         case 'done':
-                            this.db = {
-                                poems: db.poems,
-                                authors: new Map([...db.authors.entries()].sort((a,b) => a[0].localeCompare(b[0]))),
-                                collections: new Map([...db.collections.entries()].sort((a,b) => a[0].localeCompare(b[0]))),
-                                hubs: new Map([...db.hubs.entries()].sort((a,b) => a[1].title.localeCompare(b[1].title))),
-                            };
+                            this.db = db;
                             this.renderHomeView();
                             window.location.hash = '#home';
                             break;
-                        case 'error':
-                            feedbackEl.textContent = `Erreur du worker: ${error}`;
-                            break;
+                        case 'error': feedbackEl.textContent = `Erreur du worker: ${error}`; break;
                     }
                 };
                 worker.postMessage(fileContent);
             },
-            
-            // --- RENDERING VIEWS ---
+
+            // --- FILTER & SORT ---
+            renderControls(viewType, sortOptions) {
+                this.controlsView.style.display = 'flex';
+                const controlsContainer = this.controlsView.querySelector('div');
+                const template = document.getElementById('controls-template').content.cloneNode(true);
+                controlsContainer.innerHTML = '';
+                controlsContainer.appendChild(template);
+
+                const state = this.viewStates[viewType];
+
+                // Configurer le champ de recherche
+                const filterInput = controlsContainer.querySelector('#filter-input');
+                filterInput.value = state.query;
+                filterInput.addEventListener('input', (e) => {
+                    state.query = e.target.value;
+                    this.router();
+                });
+                
+                // Configurer le menu de tri
+                const sortBySelect = controlsContainer.querySelector('#sort-by');
+                sortBySelect.innerHTML = '';
+                sortOptions.forEach(opt => {
+                    const optionEl = document.createElement('option');
+                    optionEl.value = opt.key;
+                    optionEl.textContent = opt.label;
+                    sortBySelect.appendChild(optionEl);
+                });
+                sortBySelect.value = state.sortKey;
+                sortBySelect.addEventListener('change', (e) => {
+                    state.sortKey = e.target.value;
+                    this.router();
+                });
+                
+                // Configurer l'ordre de tri
+                const sortOrderSelect = controlsContainer.querySelector('#sort-order');
+                sortOrderSelect.value = state.sortOrder;
+                sortOrderSelect.addEventListener('change', (e) => {
+                    state.sortOrder = e.target.value;
+                    this.router();
+                });
+            },
+
+            applyFilterAndSort(items, viewType, searchKey) {
+                const state = this.viewStates[viewType];
+                const query = state.query.toLowerCase();
+
+                // 1. Filtrer
+                if (query) {
+                    items = items.filter(item => (item[searchKey] || '').toLowerCase().includes(query));
+                }
+
+                // 2. Trier
+                const sortKey = state.sortKey;
+                const sortOrder = state.sortOrder === 'asc' ? 1 : -1;
+                
+                items.sort((a, b) => {
+                    let valA, valB;
+                    // Logique pour obtenir la valeur de tri
+                    switch (sortKey) {
+                        case 'totalPoems': valA = a.stats.totalPoems; valB = b.stats.totalPoems; break;
+                        case 'totalCollections': valA = a.stats.totalCollections; valB = b.stats.totalCollections; break;
+                        case 'poemCount': valA = a.poems.length; valB = b.poems.length; break;
+                        case 'versionCount': valA = a.versions.length; valB = b.versions.length; break;
+                        case 'author': valA = a.metadata.author; valB = b.metadata.author; break;
+                        case 'publication_date': valA = a.metadata.publication_date || 0; valB = b.metadata.publication_date || 0; break;
+                        default: valA = a[sortKey]; valB = b[sortKey];
+                    }
+                    
+                    valA = valA || '';
+                    valB = valB || '';
+
+                    if (typeof valA === 'string') {
+                        return valA.localeCompare(valB) * sortOrder;
+                    }
+                    return (valA - valB) * sortOrder;
+                });
+                return items;
+            },
+
+            // --- VIEW RENDERERS ---
             renderUploadView() {
                 const template = document.getElementById('upload-template');
                 this.views.upload.innerHTML = '';
@@ -365,59 +402,57 @@
                 this.views.home.appendChild(grid);
             },
             
-            renderList(title, data, itemRenderer, sortFn) {
+            renderList(viewType, title, data, itemRenderer, sortOptions, searchKey) {
+                this.renderControls(viewType, sortOptions);
+                let items = Array.from(data.values());
+                items = this.applyFilterAndSort(items, viewType, searchKey);
+                
                 this.views.list.innerHTML = `
-                    <h2 class="text-2xl font-bold mb-4 text-slate-900 dark:text-white">${title}</h2>
+                    <h2 class="text-2xl font-bold mb-4 text-slate-900 dark:text-white">${title} (${items.length})</h2>
                     <div class="bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden">
                         <div id="list-container"></div>
                     </div>
                 `;
                 const container = document.getElementById('list-container');
-                const items = Array.from(data.values());
-                if (sortFn) items.sort((a, b) => sortFn(a).localeCompare(sortFn(b)));
-                
                 items.forEach(item => {
                     container.appendChild(itemRenderer.call(this, item));
                 });
             },
             
-            // --- ITEM RENDERERS for lists ---
+            // --- ITEM RENDERERS (LISTS) ---
             renderAuthorListItem(author) {
                 const template = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = template.querySelector('a');
                 link.href = `#author/${encodeURIComponent(author.name)}`;
                 link.querySelector('p').textContent = author.name;
-                const meta = link.querySelector('.text-sm');
+                const meta = link.querySelector('.item-meta');
                 meta.innerHTML = `<span>${author.stats.totalPoems} poèmes</span><span>${author.stats.totalCollections} recueils</span>`;
                 return template;
             },
-            
             renderCollectionListItem(collection) {
                 const template = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = template.querySelector('a');
                 link.href = `#collection/${encodeURIComponent(collection.name)}`;
                 link.querySelector('p').textContent = collection.name;
-                const meta = link.querySelector('.text-sm');
+                const meta = link.querySelector('.item-meta');
                 meta.innerHTML = `<span>${collection.poems.length} poèmes</span>`;
                 return template;
             },
-
             renderHubListItem(hub) {
                 const template = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = template.querySelector('a');
                 link.href = `#hub/${hub.id}`;
                 link.querySelector('p').textContent = hub.title;
-                const meta = link.querySelector('.text-sm');
+                const meta = link.querySelector('.item-meta');
                 meta.innerHTML = `<span>${hub.versions.length} versions</span>`;
                 return template;
             },
-            
             renderPoemListItem(poem) {
                 const template = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = template.querySelector('a');
                 link.href = `#poem/${poem.page_id}`;
                 link.querySelector('p').textContent = poem.title;
-                const meta = link.querySelector('.text-sm');
+                const meta = link.querySelector('.item-meta');
                 const author = poem.metadata.author || 'Inconnu';
                 const collection = poem.metadata.source_collection || 'Hors recueil';
                 meta.innerHTML = `<span>${author}</span><span>${collection}</span>`;
@@ -471,18 +506,19 @@
             
             renderCollectionDetail(collectionName) {
                 const collection = this.db.collections.get(collectionName);
-                if (!collection) return this.views.list.innerHTML = '<p>Recueil non trouvé.</p>';
-
-                const poems = [...collection.poems].sort((a, b) => a.title.localeCompare(b.title));
-                this.renderList(collection.name, poems, this.renderPoemListItem);
+                if (!collection) { this.views.list.innerHTML = '<p>Recueil non trouvé.</p>'; return; }
+                const sortOptions = [
+                    { key: 'title', label: 'Titre' },
+                    { key: 'publication_date', label: 'Date' }
+                ];
+                this.renderList('collection', collection.name, collection.poems, this.renderPoemListItem, sortOptions, 'title');
             },
             
             renderHubDetail(hubId) {
                 const hub = this.db.hubs.get(hubId);
-                if (!hub) return this.views.list.innerHTML = '<p>Hub non trouvé.</p>';
-
-                const versions = [...hub.versions].sort((a, b) => a.title.localeCompare(b.title));
-                this.renderList(hub.title, versions, this.renderPoemListItem);
+                if (!hub) { this.views.list.innerHTML = '<p>Hub non trouvé.</p>'; return; }
+                const sortOptions = [{ key: 'title', label: 'Titre' }];
+                this.renderList('hub', hub.title, hub.versions, this.renderPoemListItem, sortOptions, 'title');
             },
             
             renderPoemDetail(pageId) {
@@ -548,4 +584,4 @@
     </script>
 
 </body>
-</html>
+</html>s

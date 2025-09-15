@@ -94,8 +94,11 @@
     </template>
     
     <template id="controls-template">
-        <div class="flex-grow">
-            <input type="search" id="filter-input" placeholder="Rechercher..." class="w-full md:w-1/3 bg-slate-100 dark:bg-slate-700 p-2 rounded-md border border-slate-300 dark:border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+        <div class="flex-grow relative">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg class="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            </div>
+            <input type="search" id="filter-input" placeholder="Rechercher..." class="w-full md:w-96 bg-slate-100 dark:bg-slate-700 p-2 pl-10 rounded-md border border-slate-300 dark:border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
         </div>
         <div class="flex items-center gap-2">
             <label for="sort-by" class="text-sm font-medium">Trier par :</label>
@@ -173,7 +176,6 @@
             controlsView: document.getElementById('controls-view'),
             breadcrumbsEl: document.getElementById('breadcrumbs'),
             
-            // --- State Management ---
             viewStates: {
                 authors: { query: '', sortKey: 'name', sortOrder: 'asc' },
                 collections: { query: '', sortKey: 'name', sortOrder: 'asc' },
@@ -184,6 +186,7 @@
                 hub: { query: '', sortKey: 'title', sortOrder: 'asc' },
             },
             currentViewType: null,
+            lastControlsViewType: null,
 
             init() {
                 this.renderUploadView();
@@ -191,7 +194,6 @@
                 this.router();
             },
 
-            // --- ROUTING & VIEW MANAGEMENT ---
             router() {
                 const hash = window.location.hash || '#';
                 const [path, ...params] = hash.substring(1).split('/');
@@ -205,41 +207,33 @@
                 this.currentViewType = path;
                 
                 const listViews = ['authors', 'collections', 'hubs', 'poems', 'author', 'collection', 'hub'];
+                if(!listViews.includes(path)) {
+                    this.lastControlsViewType = null;
+                }
+
                 if(listViews.includes(path)) {
                     this.views.list.classList.add('active');
                 }
 
                 switch (path) {
                     case 'authors':
-                        this.renderList(
-                            path, 'Auteurs', this.db.authors, this.renderAuthorListItem,
-                            [{key: 'name', label: 'Nom'}, {key: 'totalPoems', label: 'Nb. poèmes'}],
-                            'name'
-                        );
+                        this.renderList('authors', 'Auteurs', this.db.authors, this.renderAuthorListItem,
+                            [{key: 'name', label: 'Nom'}, {key: 'totalPoems', label: 'Nb. poèmes'}], 'name');
                         break;
                     case 'author': this.renderAuthorDetail(decodeURIComponent(params[0])); break;
                     case 'collections':
-                        this.renderList(
-                            path, 'Recueils', this.db.collections, this.renderCollectionListItem,
-                            [{key: 'name', label: 'Nom'}, {key: 'poemCount', label: 'Nb. poèmes'}],
-                            'name'
-                        );
+                        this.renderList('collections', 'Recueils', this.db.collections, this.renderCollectionListItem,
+                            [{key: 'name', label: 'Nom'}, {key: 'poemCount', label: 'Nb. poèmes'}], 'name');
                         break;
                     case 'collection': this.renderCollectionDetail(decodeURIComponent(params[0])); break;
                     case 'hubs':
-                        this.renderList(
-                            path, 'Hubs Multi-versions', this.db.hubs, this.renderHubListItem,
-                            [{key: 'title', label: 'Titre'}, {key: 'versionCount', label: 'Nb. versions'}],
-                            'title'
-                        );
+                        this.renderList('hubs', 'Hubs Multi-versions', this.db.hubs, this.renderHubListItem,
+                            [{key: 'title', label: 'Titre'}, {key: 'versionCount', label: 'Nb. versions'}], 'title');
                         break;
                     case 'hub': this.renderHubDetail(parseInt(params[0])); break;
                     case 'poems':
-                        this.renderList(
-                            path, 'Tous les poèmes', this.db.poems, this.renderPoemListItem,
-                            [{key: 'title', label: 'Titre'}, {key: 'author', label: 'Auteur'}, {key: 'publication_date', label: 'Date'}],
-                            'title'
-                        );
+                        this.renderList('poems', 'Tous les poèmes', this.db.poems, this.renderPoemListItem,
+                            [{key: 'title', label: 'Titre'}, {key: 'author', label: 'Auteur'}, {key: 'publication_date', label: 'Date'}], 'title');
                         break;
                     case 'poem': this.views.poem.classList.add('active'); this.renderPoemDetail(parseInt(params[0])); break;
                     case 'home': this.views.home.classList.add('active'); break;
@@ -254,22 +248,14 @@
                 this.controlsView.style.display = 'none';
             },
             
-            // --- DATA LOADING ---
             setupUploadEvents() {
                 const dropZone = document.getElementById('drop-zone');
                 const fileInput = document.getElementById('file-input');
-                const feedbackEl = document.getElementById('loading-feedback');
-
                 dropZone.addEventListener('click', () => fileInput.click());
                 fileInput.addEventListener('change', (e) => this.handleFile(e.target.files[0]));
-
-                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                }));
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, (ev) => { ev.preventDefault(); ev.stopPropagation(); }));
                 ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.add('drag-over')));
                 ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.remove('drag-over')));
-                
                 dropZone.addEventListener('drop', (e) => this.handleFile(e.dataTransfer.files[0]));
             },
 
@@ -277,62 +263,48 @@
                 if (!file) return;
                 const feedbackEl = document.getElementById('loading-feedback');
                 feedbackEl.textContent = 'Chargement du fichier...';
-                
                 const reader = new FileReader();
                 reader.onload = (event) => {
-                    feedbackEl.textContent = 'Décompression... (cela peut prendre un moment)';
+                    feedbackEl.textContent = 'Décompression...';
                     try {
-                        const compressed = new Uint8Array(event.target.result);
-                        const decompressed = pako.inflate(compressed, { to: 'string' });
+                        const decompressed = pako.inflate(new Uint8Array(event.target.result), { to: 'string' });
                         this.processData(decompressed);
-                    } catch (err) {
-                        feedbackEl.textContent = `Erreur de décompression: ${err.message}`;
-                    }
+                    } catch (err) { feedbackEl.textContent = `Erreur: ${err.message}`; }
                 };
                 reader.readAsArrayBuffer(file);
             },
             
             processData(fileContent) {
-                const workerScript = document.getElementById('data-worker').textContent;
-                const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
-                const worker = new Worker(URL.createObjectURL(workerBlob));
+                const worker = new Worker(URL.createObjectURL(new Blob([document.getElementById('data-worker').textContent])));
                 const feedbackEl = document.getElementById('loading-feedback');
-
                 worker.onmessage = (event) => {
                     const { status, db, error } = event.data;
                     switch (status) {
-                        case 'parsing': feedbackEl.textContent = 'Analyse des données JSON...'; break;
-                        case 'indexing': feedbackEl.textContent = 'Création des index pour la navigation...'; break;
+                        case 'parsing': feedbackEl.textContent = 'Analyse des données...'; break;
+                        case 'indexing': feedbackEl.textContent = 'Indexation du corpus...'; break;
                         case 'done':
                             this.db = db;
                             this.renderHomeView();
                             window.location.hash = '#home';
                             break;
-                        case 'error': feedbackEl.textContent = `Erreur du worker: ${error}`; break;
+                        case 'error': feedbackEl.textContent = `Erreur: ${error}`; break;
                     }
                 };
                 worker.postMessage(fileContent);
             },
 
-            // --- FILTER & SORT ---
             renderControls(viewType, sortOptions) {
                 this.controlsView.style.display = 'flex';
                 const controlsContainer = this.controlsView.querySelector('div');
-                const template = document.getElementById('controls-template').content.cloneNode(true);
-                controlsContainer.innerHTML = '';
-                controlsContainer.appendChild(template);
-
+                controlsContainer.innerHTML = document.getElementById('controls-template').innerHTML;
                 const state = this.viewStates[viewType];
-
                 const filterInput = controlsContainer.querySelector('#filter-input');
                 filterInput.value = state.query;
                 filterInput.addEventListener('input', (e) => {
                     state.query = e.target.value;
                     this.router();
                 });
-                
                 const sortBySelect = controlsContainer.querySelector('#sort-by');
-                sortBySelect.innerHTML = '';
                 sortOptions.forEach(opt => {
                     const optionEl = document.createElement('option');
                     optionEl.value = opt.key;
@@ -344,7 +316,6 @@
                     state.sortKey = e.target.value;
                     this.router();
                 });
-                
                 const sortOrderSelect = controlsContainer.querySelector('#sort-order');
                 sortOrderSelect.value = state.sortOrder;
                 sortOrderSelect.addEventListener('change', (e) => {
@@ -356,42 +327,30 @@
             applyFilterAndSort(items, viewType, searchKey) {
                 const state = this.viewStates[viewType];
                 const query = state.query.toLowerCase();
-
                 if (query) {
                     items = items.filter(item => (item[searchKey] || '').toLowerCase().includes(query));
                 }
-
                 const sortKey = state.sortKey;
                 const sortOrder = state.sortOrder === 'asc' ? 1 : -1;
-                
                 items.sort((a, b) => {
                     let valA, valB;
                     switch (sortKey) {
                         case 'totalPoems': valA = a.stats.totalPoems; valB = b.stats.totalPoems; break;
-                        case 'totalCollections': valA = a.stats.totalCollections; valB = b.stats.totalCollections; break;
                         case 'poemCount': valA = a.poems.length; valB = b.poems.length; break;
                         case 'versionCount': valA = a.versions.length; valB = b.versions.length; break;
                         case 'author': valA = a.metadata.author; valB = b.metadata.author; break;
                         case 'publication_date': valA = a.metadata.publication_date || 0; valB = b.metadata.publication_date || 0; break;
                         default: valA = a[sortKey]; valB = b[sortKey];
                     }
-                    
-                    valA = valA || '';
-                    valB = valB || '';
-
-                    if (typeof valA === 'string') {
-                        return valA.localeCompare(valB) * sortOrder;
-                    }
+                    valA = valA || ''; valB = valB || '';
+                    if (typeof valA === 'string') return valA.localeCompare(valB) * sortOrder;
                     return (valA - valB) * sortOrder;
                 });
                 return items;
             },
 
-            // --- VIEW RENDERERS ---
             renderUploadView() {
-                const template = document.getElementById('upload-template');
-                this.views.upload.innerHTML = '';
-                this.views.upload.appendChild(template.content.cloneNode(true));
+                this.views.upload.innerHTML = document.getElementById('upload-template').innerHTML;
                 this.setupUploadEvents();
             },
             
@@ -399,17 +358,14 @@
                 this.views.home.innerHTML = '';
                 const grid = document.createElement('div');
                 grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6';
-
                 const homeCards = [
                     { href: '#authors', title: 'Auteurs', count: `${this.db.authors.size} auteurs`, svgPath: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M15 21v-1a6 6 0 00-5.197-5.977' },
                     { href: '#collections', title: 'Recueils', count: `${this.db.collections.size} recueils`, svgPath: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
                     { href: '#hubs', title: 'Hubs Multi-versions', count: `${this.db.hubs.size} hubs`, svgPath: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z' },
                     { href: '#poems', title: 'Tous les poèmes', count: `${this.db.poems.size} poèmes`, svgPath: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' }
                 ];
-
                 homeCards.forEach(card => {
-                    const template = document.getElementById('home-card-template');
-                    const node = template.content.cloneNode(true);
+                    const node = document.getElementById('home-card-template').content.cloneNode(true);
                     const link = node.querySelector('a');
                     link.href = card.href;
                     link.querySelector('h3').textContent = card.title;
@@ -421,10 +377,12 @@
             },
             
             renderList(viewType, title, data, itemRenderer, sortOptions, searchKey) {
-                this.renderControls(viewType, sortOptions);
+                if (viewType !== this.lastControlsViewType) {
+                    this.renderControls(viewType, sortOptions);
+                    this.lastControlsViewType = viewType;
+                }
                 let items = Array.from(data.values());
                 items = this.applyFilterAndSort(items, viewType, searchKey);
-                
                 this.views.list.innerHTML = `
                     <h2 class="text-2xl font-bold mb-4 text-slate-900 dark:text-white">${title} (${items.length})</h2>
                     <div class="bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden">
@@ -432,92 +390,72 @@
                     </div>
                 `;
                 const container = document.getElementById('list-container');
-                items.forEach(item => {
-                    container.appendChild(itemRenderer.call(this, item));
-                });
+                if (items.length === 0) {
+                    container.innerHTML = `<p class="p-4 text-slate-500 italic">Aucun résultat trouvé.</p>`;
+                } else {
+                    items.forEach(item => container.appendChild(itemRenderer.call(this, item)));
+                }
             },
             
-            // --- ITEM RENDERERS for lists ---
             renderAuthorListItem(author) {
-                const template = document.getElementById('list-item-template').content.cloneNode(true);
-                const link = template.querySelector('a');
+                const node = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = node.querySelector('a');
                 link.href = `#author/${encodeURIComponent(author.name)}`;
                 link.querySelector('p').textContent = author.name;
-                const meta = link.querySelector('.item-meta');
-                meta.innerHTML = `<span>${author.stats.totalPoems} poèmes</span><span>${author.stats.totalCollections} recueils</span>`;
-                return template;
+                link.querySelector('.item-meta').innerHTML = `<span>${author.stats.totalPoems} poèmes</span><span>${author.stats.totalCollections} recueils</span>`;
+                return node;
             },
             renderCollectionListItem(collection) {
-                const template = document.getElementById('list-item-template').content.cloneNode(true);
-                const link = template.querySelector('a');
+                const node = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = node.querySelector('a');
                 link.href = `#collection/${encodeURIComponent(collection.name)}`;
                 link.querySelector('p').textContent = collection.name;
-                const meta = link.querySelector('.item-meta');
-                meta.innerHTML = `<span>${collection.poems.length} poèmes</span>`;
-                return template;
+                link.querySelector('.item-meta').innerHTML = `<span>${collection.poems.length} poèmes</span>`;
+                return node;
             },
             renderHubListItem(hub) {
-                const template = document.getElementById('list-item-template').content.cloneNode(true);
-                const link = template.querySelector('a');
+                const node = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = node.querySelector('a');
                 link.href = `#hub/${hub.id}`;
                 link.querySelector('p').textContent = hub.title;
-                const meta = link.querySelector('.item-meta');
-                meta.innerHTML = `<span>${hub.versions.length} versions</span>`;
-                return template;
+                link.querySelector('.item-meta').innerHTML = `<span>${hub.versions.length} versions</span>`;
+                return node;
             },
             renderPoemListItem(poem) {
-                const template = document.getElementById('list-item-template').content.cloneNode(true);
-                const link = template.querySelector('a');
+                const node = document.getElementById('list-item-template').content.cloneNode(true);
+                const link = node.querySelector('a');
                 link.href = `#poem/${poem.page_id}`;
                 link.querySelector('p').textContent = poem.title;
-                const meta = link.querySelector('.item-meta');
                 const author = poem.metadata.author || 'Inconnu';
                 const collection = poem.metadata.source_collection || 'Hors recueil';
-                meta.innerHTML = `<span>${author}</span><span>${collection}</span>`;
-                return template;
+                link.querySelector('.item-meta').innerHTML = `<span>${author}</span><span>${collection}</span>`;
+                return node;
             },
             
-            // --- DETAIL VIEW RENDERERS ---
             renderAuthorDetail(authorName) {
                 const author = this.db.authors.get(authorName);
-                if (!author) return this.views.list.innerHTML = '<p>Auteur non trouvé.</p>';
-                
-                this.views.list.innerHTML = `
-                    <div class="mb-6">
-                        <h2 class="text-3xl font-bold text-slate-900 dark:text-white">${author.name}</h2>
-                        <div class="mt-2 text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-6 gap-y-2">
-                            <span><strong>${author.stats.totalPoems}</strong> poèmes</span>
-                            <span><strong>${author.stats.totalCollections}</strong> recueils</span>
-                            <span><strong>${author.stats.totalRealHubs}</strong> hubs hors recueil</span>
-                            <span><strong>${author.stats.poemsWithoutCollection}</strong> poèmes hors recueil</span>
-                        </div>
-                    </div>
-                `;
-                
+                if (!author) { this.views.list.innerHTML = '<p>Auteur non trouvé.</p>'; return; }
+                this.views.list.innerHTML = `<div class="mb-6"><h2 class="text-3xl font-bold">${author.name}</h2><div class="mt-2 text-slate-500 flex flex-wrap gap-x-6"><span><strong>${author.stats.totalPoems}</strong> poèmes</span><span><strong>${author.stats.totalCollections}</strong> recueils</span></div></div>`;
                 const container = this.views.list;
-
                 if (author.collections.size > 0) {
-                   const sortedCollections = [...author.collections.values()].sort((a,b) => a.name.localeCompare(b.name));
                    container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Recueils</h3>`;
                    const listEl = document.createElement('div');
-                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
-                   sortedCollections.forEach(c => listEl.appendChild(this.renderCollectionListItem(c)));
+                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md';
+                   [...author.collections.values()].sort((a,b)=>a.name.localeCompare(b.name)).forEach(c => listEl.appendChild(this.renderCollectionListItem(c)));
                    container.appendChild(listEl);
                 }
                  if (author.hubsWithoutCollection.size > 0) {
-                   const sortedHubs = [...author.hubsWithoutCollection.values()].sort((a,b) => a.title.localeCompare(b.title));
                    container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Multi-versions (Hors Recueil)</h3>`;
                    const listEl = document.createElement('div');
-                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
-                   sortedHubs.forEach(h => listEl.appendChild(this.renderHubListItem(h)));
+                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md';
+                   [...author.hubsWithoutCollection.values()].sort((a,b)=>a.title.localeCompare(b.title)).forEach(h => listEl.appendChild(this.renderHubListItem(h)));
                    container.appendChild(listEl);
                 }
                  if (author.poemsWithoutCollectionOrHub.length > 0) {
-                   const sortedPoems = [...author.poemsWithoutCollectionOrHub].sort((a,b) => a.title.localeCompare(b.title));
                    container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Isolés</h3>`;
                    const listEl = document.createElement('div');
-                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden';
-                   sortedPoems.forEach(p => listEl.appendChild(this.renderPoemListItem(p)));
+                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md';
+                   author.poemsWithoutCollectionOrHub.sort((a,b)=>a.title.localeCompare(b.title)).forEach(p => listEl.appendChild(this.renderPoemListItem(p)));
                    container.appendChild(listEl);
                 }
             },
@@ -543,42 +481,29 @@
                     <div class="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-lg shadow-lg">
                         <h2 class="text-3xl font-bold text-slate-900 dark:text-white font-serif">${poem.title}</h2>
                         <p class="text-lg text-slate-500 dark:text-slate-400 mt-1 mb-6">par ${meta.author || 'Auteur inconnu'}</p>
-                        
-                        <div class="text-sm text-slate-600 dark:text-slate-300 border-t border-b border-slate-200 dark:border-slate-700 py-4 mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
-                            ${meta.source_collection ? `<div><strong class="block text-slate-500 dark:text-slate-400">Recueil</strong> ${meta.source_collection}</div>` : ''}
-                            ${meta.publication_date ? `<div><strong class="block text-slate-500 dark:text-slate-400">Publié en</strong> ${meta.publication_date}</div>` : ''}
-                             ${meta.publisher ? `<div><strong class="block text-slate-500 dark:text-slate-400">Éditeur</strong> ${meta.publisher}</div>` : ''}
-                             <div class="col-span-2 md:col-span-1"><strong class="block text-slate-500 dark:text-slate-400">Source</strong> <a href="${poem.wikisource_url}" target="_blank" class="text-indigo-600 dark:text-indigo-400 hover:underline">Wikisource</a></div>
+                        <div class="text-sm text-slate-600 dark:text-slate-300 border-t border-b py-4 mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
+                            ${meta.source_collection ? `<div><strong class="block text-slate-500">Recueil</strong> ${meta.source_collection}</div>` : ''}
+                            ${meta.publication_date ? `<div><strong class="block text-slate-500">Publié en</strong> ${meta.publication_date}</div>` : ''}
+                             ${meta.publisher ? `<div><strong class="block text-slate-500">Éditeur</strong> ${meta.publisher}</div>` : ''}
+                             <div><strong class="block text-slate-500">Source</strong> <a href="${poem.wikisource_url}" target="_blank" class="text-indigo-600 hover:underline">Wikisource</a></div>
                         </div>
-
-                        <div class="poem-text text-lg leading-relaxed">
-                            ${poem.structure.stanzas.map(stanza => `<div>${stanza.join('<br>')}</div>`).join('<br><br>')}
-                        </div>
-                    </div>
-                `;
+                        <div class="poem-text text-lg leading-relaxed">${poem.structure.stanzas.map(s => `<div>${s.join('<br>')}</div>`).join('<br><br>')}</div>
+                    </div>`;
             },
             
-            // --- UI HELPERS ---
             updateBreadcrumbs(hash) {
                 this.breadcrumbsEl.classList.remove('hidden');
                 const parts = hash.substring(1).split('/').map(decodeURIComponent);
                 let path = '#';
-                
                 const homeLink = `<a href="#" class="hover:text-indigo-600">Accueil</a>`;
-                if (hash === '#' || hash === '#home') {
-                    this.breadcrumbsEl.innerHTML = homeLink;
-                    return;
-                }
-
+                if (hash === '#' || hash === '#home') { this.breadcrumbsEl.innerHTML = homeLink; return; }
                 const links = parts.map((part, i) => {
                     path += (i === 0 ? '' : '/') + encodeURIComponent(part);
                     const isLast = i === parts.length - 1;
                     const item = this.getBreadcrumbItem(parts[0], part);
-
                     if (isLast) return `<span class="font-semibold text-slate-700 dark:text-slate-200">${item}</span>`;
                     return `<a href="${path}" class="hover:text-indigo-600">${item}</a>`;
                 });
-                
                 this.breadcrumbsEl.innerHTML = `${homeLink} <span class="mx-2">/</span> ${links.join('<span class="mx-2">/</span>')}`;
             },
 

@@ -123,33 +123,68 @@
                 
                 postMessage({ status: 'indexing' });
                 const db = { poems: new Map(), authors: new Map(), collections: new Map(), hubs: new Map() };
+
+                // Étape 1: Initialiser les entités globales (collections, hubs) et les auteurs.
                 poems.forEach(p => {
                     db.poems.set(p.page_id, p);
                     const authorName = p.metadata.author || 'Auteur Inconnu';
-                    if (!db.authors.has(authorName)) db.authors.set(authorName, { name: authorName, collections: new Map(), hubsWithoutCollection: new Map(), poemsWithoutCollectionOrHub: [] });
+                    if (!db.authors.has(authorName)) {
+                        db.authors.set(authorName, {
+                            name: authorName,
+                            // Structures pour les poèmes de cet auteur
+                            poemsByCollection: new Map(), // key: collectionName, value: [poems]
+                            poemsByHubWithoutCollection: new Map(), // key: hubId, value: [poems]
+                            poemsWithoutCollectionOrHub: [],
+                            // Structures pour lier aux objets collections/hubs globaux (pour la vue détail)
+                            collections: new Map(),
+                            hubsWithoutCollection: new Map(),
+                        });
+                    }
                     const collectionName = p.metadata.source_collection;
-                    if (collectionName && !db.collections.has(collectionName)) db.collections.set(collectionName, { name: collectionName, poems: [] });
-                    if (p.hub_title && !db.hubs.has(p.hub_page_id)) db.hubs.set(p.hub_page_id, { id: p.hub_page_id, title: p.hub_title, versions: [] });
+                    if (collectionName && !db.collections.has(collectionName)) {
+                        db.collections.set(collectionName, { name: collectionName, poems: [] });
+                    }
+                    if (p.hub_title && !db.hubs.has(p.hub_page_id)) {
+                        db.hubs.set(p.hub_page_id, { id: p.hub_page_id, title: p.hub_title, versions: [] });
+                    }
                 });
+
+                // Étape 2: Lier les poèmes
                 for (const poem of poems) {
-                    const author = db.authors.get(poem.metadata.author || 'Auteur Inconnu');
+                    const authorName = poem.metadata.author || 'Auteur Inconnu';
+                    const author = db.authors.get(authorName);
                     const collectionName = poem.metadata.source_collection;
                     const hubId = poem.hub_title ? poem.hub_page_id : null;
-                    if(collectionName && db.collections.has(collectionName)) db.collections.get(collectionName).poems.push(poem);
-                    if(hubId && db.hubs.has(hubId)) db.hubs.get(hubId).versions.push(poem);
-                    if (collectionName && db.collections.has(collectionName)) {
-                        const collection = db.collections.get(collectionName);
-                        if (!author.collections.has(collectionName)) author.collections.set(collectionName, collection);
-                    } else if (hubId && db.hubs.has(hubId)) {
-                        const hub = db.hubs.get(hubId);
-                        if (!author.hubsWithoutCollection.has(hubId)) author.hubsWithoutCollection.set(hubId, hub);
+                    
+                    // Remplir les listes de poèmes/versions globales
+                    if(collectionName) db.collections.get(collectionName)?.poems.push(poem);
+                    if(hubId) db.hubs.get(hubId)?.versions.push(poem);
+
+                    // Remplir les structures spécifiques à l'auteur
+                    if (collectionName) {
+                        if (!author.poemsByCollection.has(collectionName)) {
+                            author.poemsByCollection.set(collectionName, []);
+                            // Lier l'objet collection global à l'auteur
+                            author.collections.set(collectionName, db.collections.get(collectionName));
+                        }
+                        author.poemsByCollection.get(collectionName).push(poem);
+                    } else if (hubId) {
+                         if (!author.poemsByHubWithoutCollection.has(hubId)) {
+                            author.poemsByHubWithoutCollection.set(hubId, []);
+                            // Lier l'objet hub global à l'auteur
+                            author.hubsWithoutCollection.set(hubId, db.hubs.get(hubId));
+                        }
+                        author.poemsByHubWithoutCollection.get(hubId).push(poem);
                     } else {
                         author.poemsWithoutCollectionOrHub.push(poem);
                     }
                 }
+                
+                // Étape 3: Calculer les statistiques correctement
                 for (const author of db.authors.values()) {
-                    const poemsInCollections = [...author.collections.values()].reduce((acc, c) => acc + c.poems.length, 0);
-                    const poemsInHubs = [...author.hubsWithoutCollection.values()].reduce((acc, h) => acc + h.versions.length, 0);
+                    const poemsInCollections = [...author.poemsByCollection.values()].reduce((acc, poemsList) => acc + poemsList.length, 0);
+                    const poemsInHubs = [...author.poemsByHubWithoutCollection.values()].reduce((acc, poemsList) => acc + poemsList.length, 0);
+                    
                     author.stats = {
                         totalPoems: poemsInCollections + poemsInHubs + author.poemsWithoutCollectionOrHub.length,
                         poemsWithoutCollection: poemsInHubs + author.poemsWithoutCollectionOrHub.length,
@@ -157,6 +192,7 @@
                         totalCollections: author.collections.size
                     };
                 }
+                
                 postMessage({ status: 'done', db });
             } catch (error) { postMessage({ status: 'error', error: error.message }); }
         };

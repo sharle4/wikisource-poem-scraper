@@ -25,7 +25,7 @@ class DatabaseManager:
         self.conn: Optional[aiosqlite.Connection] = None
 
     async def initialize(self):
-        """Initialise la connexion asynchrone et crée la table si elle n'existe pas."""
+        """Initialise la connexion asynchrone et crée/met à jour la table."""
         try:
             self.conn = await aiosqlite.connect(self.db_path)
             await self.conn.execute(
@@ -35,10 +35,15 @@ class DatabaseManager:
                     title TEXT NOT NULL,
                     author TEXT,
                     publication_date TEXT,
-                    source_collection TEXT,
                     language TEXT NOT NULL,
                     checksum_sha256 TEXT NOT NULL,
                     extraction_timestamp TEXT NOT NULL,
+                    
+                    collection_page_id INTEGER,
+                    collection_title TEXT,
+                    section_title TEXT,
+                    poem_order INTEGER,
+
                     hub_title TEXT,
                     hub_page_id INTEGER NOT NULL
                 )
@@ -68,21 +73,25 @@ class DatabaseManager:
         cursor.execute(
             """
             INSERT OR IGNORE INTO poems (
-                page_id, title, author, publication_date, source_collection,
-                language, checksum_sha256, extraction_timestamp,
+                page_id, title, author, publication_date, language, 
+                checksum_sha256, extraction_timestamp,
+                collection_page_id, collection_title, section_title, poem_order,
                 hub_title, hub_page_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 poem.page_id,
                 poem.title,
                 poem.metadata.author,
                 poem.metadata.publication_date,
-                poem.metadata.source_collection,
                 poem.language,
                 poem.checksum_sha256,
                 poem.extraction_timestamp.isoformat(),
+                poem.collection_page_id,
+                poem.collection_title,
+                poem.section_title,
+                poem.poem_order,
                 poem.hub_title,
                 poem.hub_page_id,
             ),

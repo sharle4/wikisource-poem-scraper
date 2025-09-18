@@ -1,7 +1,7 @@
 import logging
 import re
 from enum import Enum, auto
-from typing import Set, Tuple
+from typing import Set, Tuple, List
 from urllib.parse import unquote
 
 import mwparserfromhell
@@ -20,6 +20,7 @@ class PageType(Enum):
     AUTHOR = auto()
     DISAMBIGUATION = auto()
     OTHER = auto()
+    SECTION_TITLE = auto()
 
 
 def get_localized_prefix(lang: str, prefix_type: str) -> str:
@@ -220,3 +221,39 @@ class PageClassifier:
                 
         logger.info(f"Extrait {len(titles)} titres de sous-pages de la collection '{self.title}'.")
         return titles
+
+    def extract_ordered_collection_links(self) -> List[Tuple[str, PageType]]:
+        """
+        NOUVEAU: Extrait les liens et titres de section d'un recueil EN CONSERVANT L'ORDRE.
+        Tente d'identifier les éléments qui sont des titres de section (non-liens).
+        Retourne une liste de tuples (texte_element, type_element).
+        """
+        ordered_items: List[Tuple[str, PageType]] = []
+        
+        toc_element = self.soup.select_one("div.ws-summary, div#toc, div.ws_summary")
+        if toc_element:
+            list_items = toc_element.select('li')
+            for item in list_items:
+                link = item.find('a', href=re.compile(r'^/wiki/'), recursive=False)
+                if link and link.get('title'):
+                    ordered_items.append((link['title'], PageType.POEM))
+                else:
+                    section_title = item.get_text(strip=True)
+                    if section_title:
+                        ordered_items.append((section_title, PageType.SECTION_TITLE))
+            if ordered_items:
+                return ordered_items
+
+        content_area = self.soup.select_one(".mw-parser-output") or self.soup
+        for element in content_area.find_all(['h2', 'h3', 'ul', 'ol', 'dl', 'div'], recursive=False):
+            if element.name in ['h2', 'h3']:
+                section_title = element.get_text(strip=True)
+                if section_title:
+                    ordered_items.append((section_title, PageType.SECTION_TITLE))
+            elif element.name in ['ul', 'ol', 'dl']:
+                for link in element.select('li a[href]'):
+                    if link.get('title') and link['href'].startswith('/wiki/'):
+                        ordered_items.append((link['title'], PageType.POEM))
+
+        logger.info(f"Extrait {len(ordered_items)} éléments ordonnés (poèmes/sections) de la collection '{self.title}'.")
+        return ordered_items

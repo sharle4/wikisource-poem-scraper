@@ -5,7 +5,7 @@ import json
 import logging
 import queue
 import threading
-from typing import Set, Optional, Dict, Any
+from typing import Set, Optional, Dict, Any, List
 from datetime import datetime, timezone
 
 import re
@@ -19,7 +19,7 @@ from .classifier import PageClassifier, PageType
 from .database import DatabaseManager, connect_sync_db
 from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
-from .schemas import PoemSchema
+from .schemas import PoemSchema, Collection, Section, PoemInfo
 from .cleaner import process_poem
 from .tree_logger import HierarchicalLogger
 from .log_manager import LogManager
@@ -168,102 +168,199 @@ class ScraperOrchestrator:
         writer_queue: queue.Queue,
         pbar: tqdm,
     ):
-        loop = asyncio.get_running_loop()
+        """Consomme les pages de la file, les classifie et délègue le traitement."""
         while True:
             try:
                 queue_item = await page_queue.get()
-                
-                page_info = queue_item['page_info']
-                parent_title = queue_item['parent_title']
-                author_cat = queue_item['author_cat']
-                hub_info = queue_item.get("hub_info")
-                page_id = page_info["pageid"]
-                page_title = page_info.get('title', 'N/A')
-
-                if page_id in self.processed_ids:
-                    page_queue.task_done()
-                    continue
-
-                try:
-                    page_data = await self._retry_call(
-                        lambda: client.get_resolved_page_data(page_id=page_id),
-                        op_name="get_resolved_page_data",
-                        ctx=f"page_id={page_id}"
-                    )
-                    if not page_data:
-                        raise PageProcessingError(f"API call for page ID {page_id} returned no data (page might be deleted or invalid).")
-
-                    final_page_id = page_data["pageid"]
-                    
-                    if final_page_id in self.processed_ids:
-                        self.processed_ids.add(page_id)
-                        page_queue.task_done()
-                        continue
-
-                    timestamp = datetime.now(timezone.utc)
-                    page_title = page_data.get('title', 'N/A')
-                    page_html = await self._retry_call(
-                        lambda: client.get_rendered_html(final_page_id),
-                        op_name="get_rendered_html",
-                        ctx=f"page_id={final_page_id}"
-                    )
-                    if not page_html:
-                        raise PageProcessingError(f"API did not return rendered HTML for final page ID {final_page_id}.")
-
-                    soup = BeautifulSoup(page_html, "lxml")
-                    wikitext = page_data.get("revisions", [{}])[0].get("content", "")
-                    wikicode = mwparserfromhell.parse(wikitext)
-                    page_url = page_data.get("fullurl", "") or f"https://{self.config.lang}.wikisource.org/wiki/{page_title.replace(' ', '_')}"
-                    
-                    classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
-                    page_type, classification_reason = classifier.classify()
-
-                    if self.tree_logger:
-                        self.tree_logger.add_node(author_cat, parent_title, page_title, page_type, classification_reason, timestamp)
-
-                    if page_type == PageType.POEM:
-                        try:
-                            poem_data = self.processor.process(page_data, soup, self.config.lang, wikicode, hub_info=hub_info)
-                            await self._writer_put(writer_queue, poem_data)
-                        except PoemParsingError as e:
-                            logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
-                            self.skipped_counter += 1
-                    
-                    elif page_type == PageType.POETIC_COLLECTION:
-                        logger.info(f"Page '{page_title}' is a POETIC_COLLECTION ({classification_reason}). Extracting sub-pages.")
-                        sub_titles = classifier.extract_collection_sub_pages()
-                        children_count = len(sub_titles)
-                        self.log_manager.log_collection(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
-                        if sub_titles:
-                            await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat, hub_info=hub_info)
-                        self.skipped_counter += 1
-
-                    elif page_type == PageType.MULTI_VERSION_HUB:
-                        logger.info(f"Page '{page_title}' is a MULTI_VERSION_HUB ({classification_reason}). Extracting sub-pages.")
-                        sub_titles = classifier.extract_hub_sub_pages()
-                        children_count = len(sub_titles)
-                        self.log_manager.log_hub(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, children_count)
-                        if sub_titles:
-                            new_hub_info = {"title": page_title, "page_id": final_page_id}
-                            await self._enqueue_new_titles(client, page_queue, list(sub_titles), pbar, current_parent_title=page_title, author_cat=author_cat, hub_info=new_hub_info)
-                        self.skipped_counter += 1
-                    
-                    else:
-                        logger.debug(f"Skipping page '{page_title}' classified as {page_type.name} ({classification_reason}).")
-                        self.log_manager.log_other(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason)
-                        self.skipped_counter += 1
-
-                except Exception as e:
-                    logger.error(f"Error processing page {page_title} (ID: {page_id}): {e}", exc_info=False)
-                    self.skipped_counter += 1
-                finally:
-                    self.processed_ids.add(page_id)
-                    if 'final_page_id' in locals():
-                        self.processed_ids.add(final_page_id)
-                    pbar.update(1)
-                    page_queue.task_done()
+                await self._process_single_page(client, writer_queue, pbar, queue_item)
             except asyncio.CancelledError:
                 break
+            finally:
+                page_queue.task_done()
+
+    async def _process_single_page(
+        self, client: WikiAPIClient, writer_queue: queue.Queue, pbar: tqdm, queue_item: Dict[str, Any]
+    ):
+        """Logique de traitement pour une seule page, extraite pour être réutilisable."""
+        page_info = queue_item['page_info']
+        parent_title = queue_item['parent_title']
+        author_cat = queue_item['author_cat']
+        hub_info = queue_item.get("hub_info")
+        
+        collection_context = queue_item.get("collection_context")
+        order_in_collection = queue_item.get("order_in_collection")
+        section_title_in_collection = queue_item.get("section_title_in_collection")
+        is_first_poem = queue_item.get("is_first_poem_in_collection", False)
+        
+        page_id = page_info["pageid"]
+        page_title = page_info.get('title', 'N/A')
+
+        if page_id in self.processed_ids:
+            return
+
+        try:
+            page_data = await self._retry_call(
+                lambda: client.get_resolved_page_data(page_id=page_id),
+                op_name="get_resolved_page_data",
+                ctx=f"page_id={page_id}"
+            )
+            if not page_data:
+                raise PageProcessingError(f"API call for page ID {page_id} returned no data.")
+
+            final_page_id = page_data["pageid"]
+            if final_page_id in self.processed_ids:
+                self.processed_ids.add(page_id)
+                return
+
+            timestamp = datetime.now(timezone.utc)
+            page_title = page_data.get('title', 'N/A')
+            page_html = await self._retry_call(
+                lambda: client.get_rendered_html(final_page_id),
+                op_name="get_rendered_html",
+                ctx=f"page_id={final_page_id}"
+            )
+            if not page_html:
+                raise PageProcessingError(f"API did not return HTML for final page ID {final_page_id}.")
+
+            soup = BeautifulSoup(page_html, "lxml")
+            wikitext = page_data.get("revisions", [{}])[0].get("content", "")
+            wikicode = mwparserfromhell.parse(wikitext)
+            page_url = page_data.get("fullurl", f"https://{self.config.lang}.wikisource.org/wiki/{page_title.replace(' ', '_')}")
+            
+            classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
+            page_type, classification_reason = classifier.classify()
+
+            if self.tree_logger:
+                self.tree_logger.add_node(author_cat, parent_title, page_title, page_type, classification_reason, timestamp)
+
+            if page_type == PageType.POEM:
+                try:
+                    poem_data = self.processor.process(
+                        page_data, soup, self.config.lang, wikicode, hub_info=hub_info,
+                        collection_context=collection_context,
+                        order_in_collection=order_in_collection,
+                        section_title_in_collection=section_title_in_collection,
+                        is_first_poem_in_collection=is_first_poem
+                    )
+                    await self._writer_put(writer_queue, poem_data)
+                except PoemParsingError as e:
+                    logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
+                    self.skipped_counter += 1
+            
+            elif page_type == PageType.POETIC_COLLECTION:
+                self.log_manager.log_collection(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, 0)
+                await self._process_collection(client, writer_queue, pbar, {
+                    'page_data': page_data, 'soup': soup, 'author_cat': author_cat, 'hub_info': hub_info
+                })
+                self.skipped_counter += 1
+
+            elif page_type == PageType.MULTI_VERSION_HUB:
+                logger.info(f"Page '{page_title}' is a MULTI_VERSION_HUB ({classification_reason}). Extracting sub-pages.")
+                sub_titles = classifier.extract_hub_sub_pages()
+                self.log_manager.log_hub(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, len(sub_titles))
+                if sub_titles:
+                    new_hub_info = {"title": page_title, "page_id": final_page_id}
+                    await self._enqueue_new_titles(client, writer_queue, pbar, list(sub_titles), current_parent_title=page_title, author_cat=author_cat, hub_info=new_hub_info)
+                self.skipped_counter += 1
+            
+            else:
+                logger.debug(f"Skipping page '{page_title}' classified as {page_type.name} ({classification_reason}).")
+                self.log_manager.log_other(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason)
+                self.skipped_counter += 1
+
+        except Exception as e:
+            logger.error(f"Error processing page {page_title} (ID: {page_id}): {e}", exc_info=False)
+            self.skipped_counter += 1
+        finally:
+            self.processed_ids.add(page_id)
+            if 'final_page_id' in locals(): self.processed_ids.add(final_page_id)
+            pbar.update(1)
+
+    async def _process_collection(
+        self, client: WikiAPIClient, writer_queue: queue.Queue, pbar: tqdm, context: Dict[str, Any]
+    ):
+        """Orchestre le traitement d'une page de recueil pour en extraire la structure."""
+        page_data = context['page_data']
+        soup = context['soup']
+        author_cat = context['author_cat']
+        hub_info = context.get('hub_info')
+        
+        page_id = page_data['pageid']
+        page_title = page_data['title']
+        page_url = page_data.get('fullurl', '')
+        
+        logger.info(f"Page '{page_title}' is a POETIC_COLLECTION. Extracting ordered structure.")
+        
+        classifier = PageClassifier(page_data, soup, self.config.lang, mwparserfromhell.parse(""))
+        ordered_links = classifier.extract_ordered_collection_links()
+        
+        if not ordered_links:
+            logger.warning(f"Collection '{page_title}' did not yield any ordered links.")
+            return
+
+        collection_obj = Collection(
+            page_id=page_id,
+            title=page_title,
+            url=page_url,
+            author=author_cat.split(':')[-1]
+        )
+        
+        poem_titles_to_resolve = [title for title, type in ordered_links if type == PageType.POEM]
+        resolved_pages = await self._resolve_titles_to_pages(client, poem_titles_to_resolve)
+
+        current_section_title = None
+        poem_counter_in_collection = 0
+        is_first_poem = True
+
+        for title, item_type in ordered_links:
+            if item_type == PageType.SECTION_TITLE:
+                current_section_title = title
+                logger.debug(f"Identified section '{title}' in '{page_title}'.")
+                collection_obj.content.append(Section(title=title))
+            
+            elif item_type == PageType.POEM:
+                if title in resolved_pages:
+                    page_info = resolved_pages[title]
+                    
+                    poem_info = PoemInfo(title=title, page_id=page_info['pageid'], url=f"https://{self.config.lang}.wikisource.org/?curid={page_info['pageid']}")
+                    if isinstance(collection_obj.content[-1], Section):
+                        collection_obj.content[-1].poems.append(poem_info)
+                    else:
+                        collection_obj.content.append(poem_info)
+
+                    await self._process_single_page(client, writer_queue, pbar, {
+                        'page_info': page_info,
+                        'parent_title': page_title,
+                        'author_cat': author_cat,
+                        'hub_info': hub_info,
+                        'collection_context': collection_obj,
+                        'order_in_collection': poem_counter_in_collection,
+                        'section_title_in_collection': current_section_title,
+                        'is_first_poem_in_collection': is_first_poem
+                    })
+                    poem_counter_in_collection += 1
+                    is_first_poem = False
+
+    async def _resolve_titles_to_pages(self, client: WikiAPIClient, titles: List[str]) -> Dict[str, Dict]:
+        """Résout une liste de titres en objets page_info."""
+        resolved = {}
+        for i in range(0, len(titles), 50):
+            batch = titles[i:i+50]
+            query_result = await client.get_page_info_and_redirects(batch)
+            if not query_result or not query_result.get("pages"):
+                continue
+            
+            redirect_map = {r['from']: r['to'] for r in query_result.get('redirects', [])}
+            
+            for p_info in query_result.get("pages", []):
+                if p_info.get("missing"): continue
+                resolved[p_info['title']] = p_info
+
+            for from_title, to_title in redirect_map.items():
+                if to_title in resolved:
+                    resolved[from_title] = resolved[to_title]
+
+        return resolved
 
     async def _retry_call(self, coro_factory, op_name: str = "operation", ctx: str = ""):
         """Execute an async operation with timeout and limited retries with exponential backoff."""
@@ -289,31 +386,22 @@ class ScraperOrchestrator:
             except queue.Full:
                 await asyncio.sleep(0.05)
 
-
     async def _enqueue_new_titles(
-        self, client: WikiAPIClient, queue: asyncio.Queue, titles: list[str], pbar: tqdm,
+        self, client: WikiAPIClient, writer_queue: queue.Queue, pbar: tqdm, titles: list[str],
         current_parent_title: str, author_cat: str, hub_info: Optional[dict] = None
     ):
-        logger.debug(f"Resolving {len(titles)} titles from '{current_parent_title}'.")
-        for i in range(0, len(titles), 50):
-            batch = titles[i : i + 50]
-            query_result = await client.get_page_info_and_redirects(batch)
-
-            if not query_result or not query_result.get("pages"):
-                continue
-
-            for p_info in query_result.get("pages", []):
-                if p_info.get("missing"): continue
-                
-                page_id = p_info.get("pageid")
-                if page_id and page_id not in self.processed_ids:
-                    pbar.refresh()
-                    await queue.put({
-                        'page_info': p_info,
-                        'parent_title': current_parent_title,
-                        'author_cat': author_cat,
-                        'hub_info': hub_info
-                    })
+        """Version modifiée pour mettre en file d'attente les enfants d'un hub."""
+        logger.debug(f"Resolving {len(titles)} titles from hub '{current_parent_title}'.")
+        resolved_pages = await self._resolve_titles_to_pages(client, titles)
+        
+        for title, page_info in resolved_pages.items():
+            if page_info['pageid'] not in self.processed_ids:
+                await self._process_single_page(client, writer_queue, pbar, {
+                    'page_info': page_info,
+                    'parent_title': current_parent_title,
+                    'author_cat': author_cat,
+                    'hub_info': hub_info
+                })
 
     def _sync_writer(self, writer_queue: queue.Queue):
         """Tâche synchrone pour gérer toutes les E/S disque."""
@@ -332,7 +420,7 @@ class ScraperOrchestrator:
                     break
                 try:
                     if isinstance(result, PoemSchema):
-                        json_str = result.model_dump_json()
+                        json_str = result.model_dump_json(exclude_none=True)
                         f_gz.write(json_str + "\n")
 
                         if cleaned_fp is not None:
@@ -340,7 +428,7 @@ class ScraperOrchestrator:
                             if page_id not in seen_cleaned_page_ids:
                                 seen_cleaned_page_ids.add(page_id)
                                 
-                                poem_dict = result.model_dump(mode="json")
+                                poem_dict = result.model_dump(mode="json", exclude_none=True)
                                 cleaned_poem = process_poem(poem_dict)
                                 
                                 cleaned_fp.write(json.dumps(cleaned_poem, ensure_ascii=False) + "\n")

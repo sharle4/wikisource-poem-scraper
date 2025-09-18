@@ -1,11 +1,35 @@
 import datetime
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Union
 from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+
+class PoemInfo(BaseModel):
+    """Représente un poème unique au sein d'un recueil."""
+    title: str
+    page_id: int
+    url: HttpUrl
+
+
+class Section(BaseModel):
+    """Représente une section titrée dans un recueil."""
+    title: str
+    poems: List[PoemInfo] = Field(default_factory=list)
+
+
+CollectionComponent = Union[Section, PoemInfo]
+
+
+class Collection(BaseModel):
+    """Modélise la structure complète d'un recueil de poèmes."""
+    page_id: int
+    title: str
+    author: Optional[str] = None
+    url: HttpUrl
+    content: List[CollectionComponent] = Field(default_factory=list)
 
 
 class PoemStructure(BaseModel):
     """Structure normalisée du poème (strophes et vers)."""
-
     stanzas: List[List[str]] = Field(
         ..., description="Liste de strophes, contenant des listes de vers."
     )
@@ -17,7 +41,6 @@ class PoemStructure(BaseModel):
 
 class PoemMetadata(BaseModel):
     """Conteneur structuré pour toutes les métadonnées extraites."""
-
     author: Optional[str] = Field(
         None, description="Auteur(s) principal(aux) du poème."
     )
@@ -33,9 +56,9 @@ class PoemMetadata(BaseModel):
 
 class PoemSchema(BaseModel):
     """
-    Schéma JSON complet et validé pour un poème unique.
+    Schéma JSON complet et validé pour un poème unique, maintenant enrichi
+    avec les informations structurelles du recueil.
     """
-
     page_id: int = Field(
         ..., description="Identifiant unique de la page MediaWiki (pageid)."
     )
@@ -50,8 +73,20 @@ class PoemSchema(BaseModel):
         ..., description="URL canonique complète vers la page du poème."
     )
 
+    collection_page_id: Optional[int] = Field(
+        None, description="ID de la page du recueil parent."
+    )
+    collection_title: Optional[str] = Field(
+        None, description="Titre du recueil parent."
+    )
+    section_title: Optional[str] = Field(
+        None, description="Titre de la section du poème dans le recueil."
+    )
+    poem_order: Optional[int] = Field(
+        None, description="Position ordinale du poème dans le recueil (commence à 0)."
+    )
     hub_title: Optional[str] = Field(
-        None, description="Titre de la page 'hub' de versions multiples parente. NULL pour les poèmes autonomes."
+        None, description="Titre de la page 'hub' de versions multiples parente."
     )
     hub_page_id: int = Field(
         ..., description="ID unique du groupe de poèmes. C'est le page_id du hub parent, ou le page_id du poème lui-même s'il est autonome."
@@ -59,10 +94,11 @@ class PoemSchema(BaseModel):
 
     metadata: PoemMetadata = Field(..., description="Toutes les métadonnées extraites.")
     structure: PoemStructure = Field(..., description="Structure parsée du poème.")
-
+    collection_structure: Optional[Collection] = Field(
+        None, description="Objet complet décrivant la structure du recueil parent (présent uniquement pour le premier poème d'un recueil pour éviter la duplication massive de données)."
+    )
     normalized_text: str = Field(
-        ...,
-        description="Texte complet du poème, nettoyé et concaténé.",
+        ..., description="Texte complet du poème, nettoyé et concaténé."
     )
     raw_wikitext: str = Field(
         ..., description="Le contenu wikitext complet et brut de la révision."

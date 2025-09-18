@@ -6,7 +6,7 @@ from typing import Optional
 import mwparserfromhell
 from bs4 import BeautifulSoup, Tag
 
-from .schemas import PoemSchema, PoemMetadata
+from .schemas import PoemSchema, PoemMetadata, Collection
 from .parsing import PoemParser
 from .exceptions import PoemParsingError
 
@@ -25,6 +25,10 @@ class PoemProcessor:
         lang: str,
         wikicode: mwparserfromhell.wikicode.Wikicode,
         hub_info: Optional[dict] = None,
+        collection_context: Optional[Collection] = None,
+        order_in_collection: Optional[int] = None,
+        section_title_in_collection: Optional[str] = None,
+        is_first_poem_in_collection: bool = False
     ) -> PoemSchema:
         """Méthode de traitement principale pour une seule page."""
         wikitext = page_data["revisions"][0]["content"]
@@ -40,12 +44,11 @@ class PoemProcessor:
         
         final_meta_dict = {**wikitext_meta, **html_meta}
 
-        if not final_meta_dict.get("author"):
+        if not final_meta_dict.get("source_collection"):
             if "/" in page_data["title"]:
                 parent_title = page_data["title"].split("/")[0].strip()
-                if len(parent_title) < 50: 
+                if len(parent_title) < 70: 
                     final_meta_dict["source_collection"] = parent_title
-
 
         metadata_obj = PoemMetadata(**final_meta_dict)
         normalized_text = PoemParser.create_normalized_text(structure)
@@ -66,6 +69,11 @@ class PoemProcessor:
                 "fullurl",
                 f"https://{lang}.wikisource.org/?curid={page_data['pageid']}",
             ),
+            collection_page_id=collection_context.page_id if collection_context else None,
+            collection_title=collection_context.title if collection_context else metadata_obj.source_collection,
+            section_title=section_title_in_collection,
+            poem_order=order_in_collection,
+            collection_structure=collection_context if is_first_poem_in_collection else None,
             metadata=metadata_obj,
             raw_wikitext=wikitext,
             structure=structure,
@@ -118,17 +126,18 @@ class PoemProcessor:
             if name == "infoédit":
                 if template.has("AUTEUR"):
                     author_node = template.get("AUTEUR").value
-                    if author_node.filter_wikilinks():
-                        author_name = author_node.filter_wikilinks()[0].title.split(":")[-1]
+                    wikilinks = author_node.filter_wikilinks()
+                    if wikilinks:
+                        author_name = wikilinks[0].title.split(":")[-1].strip()
                         metadata.setdefault("author", author_name)
                     else:
-                         metadata.setdefault("author", author_node.strip())
+                         metadata.setdefault("author", author_node.strip_code().strip())
                 if template.has("ANNÉE"):
                     metadata.setdefault(
-                        "publication_date", template.get("ANNÉE").value.strip()
+                        "publication_date", template.get("ANNÉE").value.strip_code().strip()
                     )
                 if template.has("RECUEIL"):
                     metadata.setdefault(
-                        "source_collection", template.get("RECUEIL").value.strip()
+                        "source_collection", template.get("RECUEIL").value.strip_code().strip()
                     )
         return metadata

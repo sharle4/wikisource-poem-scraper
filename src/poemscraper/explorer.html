@@ -37,7 +37,6 @@
         <!-- ===== Controls Bar ===== -->
          <div id="controls-view" class="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700 p-3 sticky top-[65px] z-10">
             <div class="max-w-7xl mx-auto flex items-center gap-4">
-                <!-- Les contrôles de filtre et de tri seront injectés ici -->
             </div>
         </div>
 
@@ -122,77 +121,49 @@
                 const poems = fileContent.trim().split('\n').map(line => JSON.parse(line));
                 
                 postMessage({ status: 'indexing' });
-                const db = { poems: new Map(), authors: new Map(), collections: new Map(), hubs: new Map() };
+                const db = { 
+                    poems: new Map(poems.map(p => [p.page_id, p])),
+                    authors: new Map(),
+                    collections: new Map() 
+                };
 
-                // Étape 1: Initialiser les entités globales (collections, hubs) et les auteurs.
                 poems.forEach(p => {
-                    db.poems.set(p.page_id, p);
                     const authorName = p.metadata.author || 'Auteur Inconnu';
                     if (!db.authors.has(authorName)) {
                         db.authors.set(authorName, {
                             name: authorName,
-                            // Structures pour les poèmes de cet auteur
-                            poemsByCollection: new Map(), // key: collectionName, value: [poems]
-                            poemsByHubWithoutCollection: new Map(), // key: hubId, value: [poems]
-                            poemsWithoutCollectionOrHub: [],
-                            // Structures pour lier aux objets collections/hubs globaux (pour la vue détail)
                             collections: new Map(),
-                            hubsWithoutCollection: new Map(),
+                            poemsWithoutCollection: []
                         });
                     }
-                    const collectionName = p.metadata.source_collection;
-                    if (collectionName && !db.collections.has(collectionName)) {
-                        db.collections.set(collectionName, { name: collectionName, poems: [] });
-                    }
-                    if (p.hub_title && !db.hubs.has(p.hub_page_id)) {
-                        db.hubs.set(p.hub_page_id, { id: p.hub_page_id, title: p.hub_title, versions: [] });
+                    const author = db.authors.get(authorName);
+
+                    const collectionId = p.collection_page_id;
+                    if (collectionId) {
+                        if (!db.collections.has(collectionId)) {
+                             db.collections.set(collectionId, { 
+                                id: collectionId,
+                                title: p.collection_title,
+                                author: authorName,
+                                poems: [] 
+                            });
+                        }
+                        const collection = db.collections.get(collectionId);
+                        collection.poems.push(p);
+
+                        if (!author.collections.has(collectionId)) {
+                            author.collections.set(collectionId, collection);
+                        }
+                    } else {
+                        author.poemsWithoutCollection.push(p);
                     }
                 });
 
-                // Étape 2: Lier les poèmes
-                for (const poem of poems) {
-                    const authorName = poem.metadata.author || 'Auteur Inconnu';
-                    const author = db.authors.get(authorName);
-                    const collectionName = poem.metadata.source_collection;
-                    const hubId = poem.hub_title ? poem.hub_page_id : null;
-                    
-                    // Remplir les listes de poèmes/versions globales
-                    if(collectionName) db.collections.get(collectionName)?.poems.push(poem);
-                    if(hubId) db.hubs.get(hubId)?.versions.push(poem);
+                // Trier les poèmes dans chaque recueil
+                for(const collection of db.collections.values()) {
+                    collection.poems.sort((a, b) => (a.poem_order || 0) - (b.poem_order || 0));
+                }
 
-                    // Remplir les structures spécifiques à l'auteur
-                    if (collectionName) {
-                        if (!author.poemsByCollection.has(collectionName)) {
-                            author.poemsByCollection.set(collectionName, []);
-                            // Lier l'objet collection global à l'auteur
-                            author.collections.set(collectionName, db.collections.get(collectionName));
-                        }
-                        author.poemsByCollection.get(collectionName).push(poem);
-                    } else if (hubId) {
-                         if (!author.poemsByHubWithoutCollection.has(hubId)) {
-                            author.poemsByHubWithoutCollection.set(hubId, []);
-                            // Lier l'objet hub global à l'auteur
-                            author.hubsWithoutCollection.set(hubId, db.hubs.get(hubId));
-                        }
-                        author.poemsByHubWithoutCollection.get(hubId).push(poem);
-                    } else {
-                        author.poemsWithoutCollectionOrHub.push(poem);
-                    }
-                }
-                
-                // Étape 3: Calculer les statistiques correctement
-                for (const author of db.authors.values()) {
-                    const poemsInCollections = [...author.poemsByCollection.values()].reduce((acc, poemsList) => acc + poemsList.length, 0);
-                    const poemsInHubs = [...author.poemsByHubWithoutCollection.values()].reduce((acc, poemsList) => acc + poemsList.length, 0);
-                    
-                    author.stats = {
-                        totalPoems: poemsInCollections + poemsInHubs + author.poemsWithoutCollectionOrHub.length,
-                        poemsWithoutCollection: poemsInHubs + author.poemsWithoutCollectionOrHub.length,
-                        totalRealHubs: author.hubsWithoutCollection.size,
-                        totalCollections: author.collections.size
-                    };
-                }
-                
                 postMessage({ status: 'done', db });
             } catch (error) { postMessage({ status: 'error', error: error.message }); }
         };
@@ -214,12 +185,10 @@
             
             viewStates: {
                 authors: { query: '', sortKey: 'name', sortOrder: 'asc' },
-                collections: { query: '', sortKey: 'name', sortOrder: 'asc' },
-                hubs: { query: '', sortKey: 'title', sortOrder: 'asc' },
+                collections: { query: '', sortKey: 'title', sortOrder: 'asc' },
                 poems: { query: '', sortKey: 'title', sortOrder: 'asc' },
-                author: { query: '', sortKey: 'name', sortOrder: 'asc' },
-                collection: { query: '', sortKey: 'title', sortOrder: 'asc' },
-                hub: { query: '', sortKey: 'title', sortOrder: 'asc' },
+                author: { query: '', sortKey: 'title', sortOrder: 'asc' },
+                collection: { query: '', sortKey: 'poem_order', sortOrder: 'asc' },
             },
             currentViewType: null,
             lastControlsViewType: null,
@@ -232,7 +201,7 @@
 
             router() {
                 const hash = window.location.hash || '#';
-                const [path, ...params] = hash.substring(1).split('/');
+                const [path, param] = hash.substring(1).split('/');
                 
                 this.updateBreadcrumbs(hash);
                 if (!this.db && path !== '') {
@@ -243,7 +212,7 @@
                 Object.values(this.views).forEach(v => v.classList.remove('active'));
                 this.currentViewType = path;
                 
-                const listViews = ['authors', 'collections', 'hubs', 'poems', 'author', 'collection', 'hub'];
+                const listViews = ['authors', 'collections', 'poems', 'author', 'collection'];
 
                 if (listViews.includes(path)) {
                     this.views.list.classList.add('active');
@@ -256,27 +225,22 @@
                 switch (path) {
                     case 'authors':
                         this.renderList('authors', 'Auteurs', this.db.authors, this.renderAuthorListItem,
-                            [{key: 'name', label: 'Nom'}, {key: 'totalPoems', label: 'Nb. poèmes'}], 'name');
+                            [{key: 'name', label: 'Nom'}, {key: 'poemCount', label: 'Nb. poèmes'}]);
                         break;
-                    case 'author': this.renderAuthorDetail(decodeURIComponent(params[0])); break;
+                    case 'author': this.renderAuthorDetail(decodeURIComponent(param)); break;
                     case 'collections':
                         this.renderList('collections', 'Recueils', this.db.collections, this.renderCollectionListItem,
-                            [{key: 'name', label: 'Nom'}, {key: 'poemCount', label: 'Nb. poèmes'}], 'name');
+                            [{key: 'title', label: 'Titre'}, {key: 'poemCount', label: 'Nb. poèmes'}]);
                         break;
-                    case 'collection': this.renderCollectionDetail(decodeURIComponent(params[0])); break;
-                    case 'hubs':
-                        this.renderList('hubs', 'Hubs Multi-versions', this.db.hubs, this.renderHubListItem,
-                            [{key: 'title', label: 'Titre'}, {key: 'versionCount', label: 'Nb. versions'}], 'title');
-                        break;
-                    case 'hub': this.renderHubDetail(parseInt(params[0])); break;
+                    case 'collection': this.renderCollectionDetail(parseInt(param)); break;
                     case 'poems':
                         this.renderList('poems', 'Tous les poèmes', this.db.poems, this.renderPoemListItem,
-                            [{key: 'title', label: 'Titre'}, {key: 'author', label: 'Auteur'}, {key: 'publication_date', label: 'Date'}], 'title');
+                            [{key: 'title', label: 'Titre'}, {key: 'author', label: 'Auteur'}, {key: 'publication_date', label: 'Date'}]);
                         break;
-                    case 'poem': this.views.poem.classList.add('active'); this.renderPoemDetail(parseInt(params[0])); break;
+                    case 'poem': this.views.poem.classList.add('active'); this.renderPoemDetail(parseInt(param)); break;
                     case 'home': this.views.home.classList.add('active'); break;
                     default:
-                        if (this.db) this.views.home.classList.add('active');
+                        if (this.db) { window.location.hash = '#home'; this.views.home.classList.add('active'); }
                         else this.views.upload.classList.add('active');
                 }
             },
@@ -357,9 +321,8 @@
             },
             
             updateListView() {
-                const [path, ...params] = (window.location.hash || '#').substring(1).split('/');
-                
-                const viewDetails = this.getViewDetails(path, params);
+                const [path, param] = (window.location.hash || '#').substring(1).split('/');
+                const viewDetails = this.getViewDetails(path, param);
                 if (!viewDetails) return;
 
                 const { viewType, title, data, itemRenderer, searchKey } = viewDetails;
@@ -369,7 +332,7 @@
                 
                 document.querySelector('#list-view h2').textContent = `${title} (${items.length})`;
                 const container = document.getElementById('list-container');
-                container.innerHTML = ''; // Vider la liste actuelle
+                container.innerHTML = '';
                 
                 if (items.length === 0) {
                     container.innerHTML = `<p class="p-4 text-slate-500 italic">Aucun résultat trouvé.</p>`;
@@ -388,17 +351,27 @@
                 const sortOrder = state.sortOrder === 'asc' ? 1 : -1;
                 items.sort((a, b) => {
                     let valA, valB;
-                    switch (sortKey) {
-                        case 'totalPoems': valA = a.stats.totalPoems; valB = b.stats.totalPoems; break;
-                        case 'poemCount': valA = a.poems.length; valB = b.poems.length; break;
-                        case 'versionCount': valA = a.versions.length; valB = b.versions.length; break;
-                        case 'author': valA = a.metadata.author; valB = b.metadata.author; break;
-                        case 'publication_date': valA = a.metadata.publication_date || 0; valB = b.metadata.publication_date || 0; break;
-                        default: valA = a[sortKey]; valB = b[sortKey];
+                    if (sortKey === 'poemCount') {
+                        valA = a.poems?.length || a.collections?.size || 0;
+                        valB = b.poems?.length || b.collections?.size || 0;
+                        if(a.poemsWithoutCollection) valA += a.poemsWithoutCollection.length;
+                        if(b.poemsWithoutCollection) valB += b.poemsWithoutCollection.length;
+
+                    } else if (sortKey === 'author') {
+                        valA = a.metadata?.author;
+                        valB = b.metadata?.author;
+                    } else if (sortKey === 'publication_date') {
+                        valA = a.metadata?.publication_date || 0;
+                        valB = b.metadata?.publication_date || 0;
+                    } else {
+                        valA = a[sortKey];
+                        valB = b[sortKey];
                     }
+
                     valA = valA || ''; valB = valB || '';
                     if (typeof valA === 'string') return valA.localeCompare(valB) * sortOrder;
-                    return (valA - valB) * sortOrder;
+                    if (typeof valA === 'number') return (valA - valB) * sortOrder;
+                    return 0;
                 });
                 return items;
             },
@@ -415,7 +388,6 @@
                 const homeCards = [
                     { href: '#authors', title: 'Auteurs', count: `${this.db.authors.size} auteurs`, svgPath: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M15 21v-1a6 6 0 00-5.197-5.977' },
                     { href: '#collections', title: 'Recueils', count: `${this.db.collections.size} recueils`, svgPath: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
-                    { href: '#hubs', title: 'Hubs Multi-versions', count: `${this.db.hubs.size} hubs`, svgPath: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z' },
                     { href: '#poems', title: 'Tous les poèmes', count: `${this.db.poems.size} poèmes`, svgPath: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' }
                 ];
                 homeCards.forEach(card => {
@@ -424,13 +396,13 @@
                     link.href = card.href;
                     link.querySelector('h3').textContent = card.title;
                     link.querySelector('p').textContent = card.count;
-                    link.querySelector('svg').innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${card.svgPath}"/>`;
+                    link.querySelector('svg').innerHTML = `<path stroke-linecap="round" stroke-width="2" d="${card.svgPath}"/>`;
                     grid.appendChild(node);
                 });
                 this.views.home.appendChild(grid);
             },
             
-            renderList(viewType, title, data, itemRenderer, sortOptions, searchKey) {
+            renderList(viewType, title, data, itemRenderer, sortOptions) {
                 if (viewType !== this.lastControlsViewType) {
                     this.renderControls(viewType, sortOptions);
                     this.lastControlsViewType = viewType;
@@ -445,18 +417,17 @@
                 this.updateListView();
             },
             
-            getViewDetails(path, params) {
+            getViewDetails(path, param) {
                 switch (path) {
                     case 'authors': return { viewType: 'authors', title: 'Auteurs', data: this.db.authors, itemRenderer: this.renderAuthorListItem, searchKey: 'name'};
-                    case 'collections': return { viewType: 'collections', title: 'Recueils', data: this.db.collections, itemRenderer: this.renderCollectionListItem, searchKey: 'name'};
-                    case 'hubs': return { viewType: 'hubs', title: 'Hubs Multi-versions', data: this.db.hubs, itemRenderer: this.renderHubListItem, searchKey: 'title'};
+                    case 'collections': return { viewType: 'collections', title: 'Recueils', data: this.db.collections, itemRenderer: this.renderCollectionListItem, searchKey: 'title'};
                     case 'poems': return { viewType: 'poems', title: 'Tous les poèmes', data: this.db.poems, itemRenderer: this.renderPoemListItem, searchKey: 'title'};
                     case 'collection': 
-                        const collection = this.db.collections.get(decodeURIComponent(params[0]));
-                        return collection ? { viewType: 'collection', title: collection.name, data: collection.poems, itemRenderer: this.renderPoemListItem, searchKey: 'title' } : null;
-                    case 'hub':
-                        const hub = this.db.hubs.get(parseInt(params[0]));
-                        return hub ? { viewType: 'hub', title: hub.title, data: hub.versions, itemRenderer: this.renderPoemListItem, searchKey: 'title' } : null;
+                        const collection = this.db.collections.get(parseInt(param));
+                        return collection ? { viewType: 'collection', title: collection.title, data: collection.poems, itemRenderer: this.renderPoemListItem, searchKey: 'title' } : null;
+                    case 'author':
+                         const author = this.db.authors.get(decodeURIComponent(param));
+                         return author ? { viewType: 'author', title: author.name, data: author.collections, itemRenderer: this.renderCollectionListItem, searchKey: 'title'} : null;
                 }
                 return null;
             },
@@ -466,72 +437,78 @@
                 const link = node.querySelector('a');
                 link.href = `#author/${encodeURIComponent(author.name)}`;
                 link.querySelector('p').textContent = author.name;
-                link.querySelector('.item-meta').innerHTML = `<span>${author.stats.totalPoems} poèmes</span><span>${author.stats.totalCollections} recueils</span>`;
+                const collectionCount = author.collections.size;
+                const poemCount = [...author.collections.values()].reduce((sum, coll) => sum + coll.poems.length, 0) + author.poemsWithoutCollection.length;
+                link.querySelector('.item-meta').innerHTML = `<span>${poemCount} poèmes</span><span>${collectionCount} recueils</span>`;
                 return node;
             },
             renderCollectionListItem(collection) {
                 const node = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = node.querySelector('a');
-                link.href = `#collection/${encodeURIComponent(collection.name)}`;
-                link.querySelector('p').textContent = collection.name;
-                link.querySelector('.item-meta').innerHTML = `<span>${collection.poems.length} poèmes</span>`;
+                link.href = `#collection/${collection.id}`;
+                link.querySelector('p').textContent = collection.title;
+                link.querySelector('.item-meta').innerHTML = `<span>Par ${collection.author}</span><span>${collection.poems.length} poèmes</span>`;
                 return node;
             },
-            renderHubListItem(hub) {
-                const node = document.getElementById('list-item-template').content.cloneNode(true);
-                const link = node.querySelector('a');
-                link.href = `#hub/${hub.id}`;
-                link.querySelector('p').textContent = hub.title;
-                link.querySelector('.item-meta').innerHTML = `<span>${hub.versions.length} versions</span>`;
-                return node;
-            },
-            renderPoemListItem(poem) {
+            renderPoemListItem(poem, collectionContext) {
                 const node = document.getElementById('list-item-template').content.cloneNode(true);
                 const link = node.querySelector('a');
                 link.href = `#poem/${poem.page_id}`;
-                link.querySelector('p').textContent = poem.title;
+
+                let titleHtml = '';
+                if(collectionContext && poem.section_title && (poem.poem_order === 0 || collectionContext[poem.poem_order - 1]?.section_title !== poem.section_title)) {
+                    titleHtml += `<div class="text-xs font-bold uppercase text-slate-400 dark:text-slate-500 pt-3 pb-1">${poem.section_title}</div>`;
+                }
+                titleHtml += `<p class="font-semibold text-indigo-600 dark:text-indigo-400">${poem.title}</p>`;
+
+                const container = node.querySelector('.flex-grow');
+                container.innerHTML = titleHtml;
+
+                const meta = document.createElement('div');
+                meta.className = 'item-meta text-sm text-slate-500 dark:text-slate-400 space-x-4';
                 const author = poem.metadata.author || 'Inconnu';
-                const collection = poem.metadata.source_collection || 'Hors recueil';
-                link.querySelector('.item-meta').innerHTML = `<span>${author}</span><span>${collection}</span>`;
+                const date = poem.metadata.publication_date || '';
+                meta.innerHTML = `<span>${author}</span><span>${date}</span>`;
+                container.appendChild(meta);
+                
                 return node;
             },
             
             renderAuthorDetail(authorName) {
                 const author = this.db.authors.get(authorName);
                 if (!author) { this.views.list.innerHTML = '<p>Auteur non trouvé.</p>'; return; }
-                this.views.list.innerHTML = `<div class="mb-6"><h2 class="text-3xl font-bold">${author.name}</h2><div class="mt-2 text-slate-500 flex flex-wrap gap-x-6"><span><strong>${author.stats.totalPoems}</strong> poèmes</span><span><strong>${author.stats.totalCollections}</strong> recueils</span></div></div>`;
-                const container = this.views.list;
-                if (author.collections.size > 0) {
-                   container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Recueils</h3>`;
-                   const listEl = document.createElement('div');
-                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md';
-                   [...author.collections.values()].sort((a,b)=>a.name.localeCompare(b.name)).forEach(c => listEl.appendChild(this.renderCollectionListItem(c)));
-                   container.appendChild(listEl);
-                }
-                 if (author.hubsWithoutCollection.size > 0) {
-                   container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Multi-versions (Hors Recueil)</h3>`;
-                   const listEl = document.createElement('div');
-                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md';
-                   [...author.hubsWithoutCollection.values()].sort((a,b)=>a.title.localeCompare(b.title)).forEach(h => listEl.appendChild(this.renderHubListItem(h)));
-                   container.appendChild(listEl);
-                }
-                 if (author.poemsWithoutCollectionOrHub.length > 0) {
-                   container.innerHTML += `<h3 class="text-xl font-semibold mt-8 mb-2">Poèmes Isolés</h3>`;
-                   const listEl = document.createElement('div');
-                   listEl.className = 'bg-white dark:bg-slate-800 rounded-lg shadow-md';
-                   author.poemsWithoutCollectionOrHub.sort((a,b)=>a.title.localeCompare(b.title)).forEach(p => listEl.appendChild(this.renderPoemListItem(p)));
-                   container.appendChild(listEl);
-                }
+
+                const sortOptions = [{ key: 'title', label: 'Titre' }, {key: 'poemCount', label: 'Nb. poèmes'}];
+                this.renderList('author', null, null, null, sortOptions);
             },
             
-            renderCollectionDetail(collectionName) {
-                const sortOptions = [ { key: 'title', label: 'Titre' }, { key: 'publication_date', label: 'Date' }];
-                this.renderList( 'collection', null, null, null, sortOptions, null);
-            },
-            
-            renderHubDetail(hubId) {
-                const sortOptions = [{ key: 'title', label: 'Titre' }];
-                this.renderList('hub', null, null, null, sortOptions, null);
+            renderCollectionDetail(collectionId) {
+                const collection = this.db.collections.get(collectionId);
+                if (!collection) { this.views.list.innerHTML = '<p>Recueil non trouvé.</p>'; return; }
+
+                const customPoemRenderer = (poem) => this.renderPoemListItem(poem, collection.poems);
+                
+                const viewType = 'collection';
+                if (viewType !== this.lastControlsViewType) {
+                    this.renderControls(viewType, [{ key: 'poem_order', label: 'Ordre du recueil' }, { key: 'title', label: 'Titre' }]);
+                    this.lastControlsViewType = viewType;
+                }
+
+                this.views.list.innerHTML = `
+                    <h2 class="text-2xl font-bold mb-4 text-slate-900 dark:text-white"></h2>
+                    <div class="bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden">
+                        <div id="list-container"></div>
+                    </div>`;
+
+                const state = this.viewStates.collection;
+                let items = [...collection.poems];
+                if (state.sortKey === 'title') {
+                    items.sort((a,b) => a.title.localeCompare(b.title) * (state.sortOrder === 'asc' ? 1 : -1));
+                }
+                document.querySelector('#list-view h2').textContent = `${collection.title} (${items.length})`;
+                const container = document.getElementById('list-container');
+                container.innerHTML = '';
+                items.forEach(item => container.appendChild(customPoemRenderer(item)));
             },
             
             renderPoemDetail(pageId) {
@@ -542,9 +519,9 @@
                         <h2 class="text-3xl font-bold text-slate-900 dark:text-white font-serif">${poem.title}</h2>
                         <p class="text-lg text-slate-500 dark:text-slate-400 mt-1 mb-6">par ${meta.author || 'Auteur inconnu'}</p>
                         <div class="text-sm text-slate-600 dark:text-slate-300 border-t border-b py-4 mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
-                            ${meta.source_collection ? `<div><strong class="block text-slate-500">Recueil</strong> ${meta.source_collection}</div>` : ''}
+                            ${poem.collection_title ? `<div><strong class="block text-slate-500">Recueil</strong> <a href="#collection/${poem.collection_page_id}" class="text-indigo-600 hover:underline">${poem.collection_title}</a></div>` : ''}
+                            ${poem.section_title ? `<div><strong class="block text-slate-500">Section</strong> ${poem.section_title}</div>` : ''}
                             ${meta.publication_date ? `<div><strong class="block text-slate-500">Publié en</strong> ${meta.publication_date}</div>` : ''}
-                             ${meta.publisher ? `<div><strong class="block text-slate-500">Éditeur</strong> ${meta.publisher}</div>` : ''}
                              <div><strong class="block text-slate-500">Source</strong> <a href="${poem.wikisource_url}" target="_blank" class="text-indigo-600 hover:underline">Wikisource</a></div>
                         </div>
                         <div class="poem-text text-lg leading-relaxed">${poem.structure.stanzas.map(s => `<div>${s.join('<br>')}</div>`).join('<br><br>')}</div>
@@ -555,8 +532,9 @@
                 this.breadcrumbsEl.classList.remove('hidden');
                 const parts = hash.substring(1).split('/').map(decodeURIComponent);
                 let path = '#';
-                const homeLink = `<a href="#" class="hover:text-indigo-600">Accueil</a>`;
-                if (hash === '#' || hash === '#home') { this.breadcrumbsEl.innerHTML = homeLink; return; }
+                const homeLink = `<a href="#home" class="hover:text-indigo-600">Accueil</a>`;
+                if (hash === '#' || hash === '#home' || parts[0] === '') { this.breadcrumbsEl.innerHTML = homeLink; return; }
+
                 const links = parts.map((part, i) => {
                     path += (i === 0 ? '' : '/') + encodeURIComponent(part);
                     const isLast = i === parts.length - 1;
@@ -568,13 +546,14 @@
             },
 
             getBreadcrumbItem(type, value) {
-                switch(type) {
-                    case 'author': return this.db.authors.get(value)?.name || value;
-                    case 'collection': return this.db.collections.get(value)?.name || value;
-                    case 'hub': return this.db.hubs.get(parseInt(value))?.title || value;
-                    case 'poem': return this.db.poems.get(parseInt(value))?.title || value;
-                    default: return value.charAt(0).toUpperCase() + value.slice(1);
-                }
+                try {
+                    switch(type) {
+                        case 'author': return this.db.authors.get(value)?.name || value;
+                        case 'collection': return this.db.collections.get(parseInt(value))?.title || value;
+                        case 'poem': return this.db.poems.get(parseInt(value))?.title || value;
+                        default: return {authors: 'Auteurs', collections: 'Recueils', poems: 'Poèmes'}[type] || value;
+                    }
+                } catch { return value; }
             }
         };
 

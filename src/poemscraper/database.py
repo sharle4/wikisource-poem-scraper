@@ -67,12 +67,13 @@ class DatabaseManager:
 
     def add_poem_index_sync(self, poem: PoemSchema, cursor: sqlite3.Cursor):
         """
-        Insère de manière synchrone l'index d'un poème dans la base de données.
-        Cette méthode est conçue pour être appelée depuis le thread d'écriture dédié.
+        Insère ou REMPLACE de manière synchrone l'index d'un poème.
+        Le remplacement est crucial pour que la version avec contexte (traitée plus tard)
+        puisse écraser une version sans contexte (traitée plus tôt à cause de la race condition).
         """
         cursor.execute(
             """
-            INSERT OR IGNORE INTO poems (
+            INSERT OR REPLACE INTO poems (
                 page_id, title, author, publication_date, language, 
                 checksum_sha256, extraction_timestamp,
                 collection_page_id, collection_title, section_title, poem_order,

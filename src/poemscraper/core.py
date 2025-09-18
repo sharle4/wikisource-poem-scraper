@@ -195,9 +195,6 @@ class ScraperOrchestrator:
         page_id = page_info["pageid"]
         page_title = page_info.get('title', 'N/A')
 
-        if page_id in self.processed_ids:
-            return
-
         try:
             page_data = await self._retry_call(
                 lambda: client.get_resolved_page_data(page_id=page_id),
@@ -208,7 +205,7 @@ class ScraperOrchestrator:
                 raise PageProcessingError(f"API call for page ID {page_id} returned no data.")
 
             final_page_id = page_data["pageid"]
-            if final_page_id in self.processed_ids:
+            if final_page_id != page_id and final_page_id in self.processed_ids:
                 self.processed_ids.add(page_id)
                 return
 
@@ -248,9 +245,9 @@ class ScraperOrchestrator:
                     self.skipped_counter += 1
             
             elif page_type == PageType.POETIC_COLLECTION:
-                self.log_manager.log_collection(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, 0)
                 await self._process_collection(client, writer_queue, pbar, {
-                    'page_data': page_data, 'soup': soup, 'author_cat': author_cat, 'hub_info': hub_info
+                    'page_data': page_data, 'soup': soup, 'author_cat': author_cat, 'hub_info': hub_info,
+                    'parent_title': parent_title, 'timestamp': timestamp
                 })
                 self.skipped_counter += 1
 
@@ -284,6 +281,8 @@ class ScraperOrchestrator:
         soup = context['soup']
         author_cat = context['author_cat']
         hub_info = context.get('hub_info')
+        parent_title = context.get('parent_title')
+        timestamp = context.get('timestamp', datetime.now(timezone.utc))
         
         page_id = page_data['pageid']
         page_title = page_data['title']
@@ -293,6 +292,13 @@ class ScraperOrchestrator:
         
         classifier = PageClassifier(page_data, soup, self.config.lang, mwparserfromhell.parse(""))
         ordered_links = classifier.extract_ordered_collection_links()
+        
+        poem_titles_to_resolve = [title for title, type in ordered_links if type == PageType.POEM]
+        
+        self.log_manager.log_collection(
+            timestamp.isoformat(), page_title, page_url, parent_title, 
+            "is_poetic_collection", len(poem_titles_to_resolve)
+        )
         
         if not ordered_links:
             logger.warning(f"Collection '{page_title}' did not yield any ordered links.")

@@ -3,8 +3,9 @@ Script de Nettoyage et de Déduplication du Corpus.
 
 Ce script traite un fichier de résultats `poems.jsonl.gz` pour :
 1. Nettoyer les titres des poèmes.
-2. Supprimer les poèmes en double en se basant sur leur `page_id`.
-3. Supprimer le champ de métadonnées 'license_name' qui est inutilisé.
+2. Supprimer les poèmes en double en se basant sur leur `page_id`, en conservant
+   intelligemment la version la plus complète (celle avec des informations de recueil).
+3. Supprimer les champs de métadonnées inutilisés.
 
 Utilisation:
   python -m src.poemscraper.cleaner --input <fichier_entree.jsonl.gz> --output <fichier_sortie.jsonl.gz>
@@ -84,30 +85,36 @@ def main(argv: list[str] | None = None) -> int:
     if output_path.exists():
         print(f"[AVERTISSEMENT] Le fichier de sortie {output_path} existe déjà et sera écrasé.", file=sys.stderr)
         
-    seen_page_ids: set[int] = set()
+    best_poems: Dict[int, Dict[str, Any]] = {}
     total_read = 0
-    duplicates_removed = 0
-    written_count = 0
-
+    
     print(f"[*] Traitement de {input_path}...")
+    print("[*] Phase 1: Lecture et sélection de la meilleure version pour chaque poème...")
 
+    for poem in iter_jsonl(input_path):
+        total_read += 1
+        page_id = poem.get("page_id")
+        
+        if page_id is None:
+            print(f"[AVERTISSEMENT] Poème sans page_id trouvé à la ligne {total_read}, ignoré.", file=sys.stderr)
+            continue
+
+        cleaned_poem = process_poem(poem)
+        
+        existing_poem = best_poems.get(page_id)
+        
+        if not existing_poem or (cleaned_poem.get("collection_page_id") is not None and existing_poem.get("collection_page_id") is None):
+            best_poems[page_id] = cleaned_poem
+
+    print(f"[*] Phase 2: Écriture des {len(best_poems)} poèmes uniques et optimaux dans {output_path}...")
+    
+    written_count = 0
     with open_maybe_gzip(output_path, "wt") as fout:
-        for poem in iter_jsonl(input_path):
-            total_read += 1
-            page_id = poem.get("page_id")
-            
-            if page_id is None:
-                print(f"[AVERTISSEMENT] Poème sans page_id trouvé à la ligne {total_read}, il sera conservé.", file=sys.stderr)
-            elif page_id in seen_page_ids:
-                duplicates_removed += 1
-                continue
-            else:
-                seen_page_ids.add(page_id)
-
-            processed = process_poem(poem)
-            
-            fout.write(json.dumps(processed, ensure_ascii=False) + "\n")
+        for poem in best_poems.values():
+            fout.write(json.dumps(poem, ensure_ascii=False) + "\n")
             written_count += 1
+
+    duplicates_removed = total_read - written_count
 
     print("\n" + "="*50)
     print(" " * 15 + "RAPPORT DE NETTOYAGE")

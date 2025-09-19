@@ -40,12 +40,15 @@ class ScraperOrchestrator:
         self.write_cleaned = str(getattr(config, "cleaned", "true")).lower() == "true"
 
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
-        (self.config.output_dir / "logs").mkdir(parents=True, exist_ok=True)
-
-        if not collection_log.handlers:
-            log_path = self.config.output_dir / "logs" / "collection_processing.log"
+        self.output_file = self.config.output_dir / "poems.jsonl.gz"
+        self.cleaned_output_file = self.config.output_dir / "poems.cleaned.jsonl.gz"
+        self.db_path = self.config.output_dir / "poems_index.sqlite"
+        
+        if not collection_log.hasHandlers():
+            collection_log_path = self.config.output_dir / "logs" / "collection_processing.log"
+            collection_log_path.parent.mkdir(parents=True, exist_ok=True)
             handler = logging.handlers.RotatingFileHandler(
-                log_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'
+                collection_log_path, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8'
             )
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
@@ -53,10 +56,6 @@ class ScraperOrchestrator:
             collection_log.setLevel(logging.DEBUG)
             collection_log.info("Logger de traitement des recueils initialisé.")
 
-
-        self.output_file = self.config.output_dir / "poems.jsonl.gz"
-        self.cleaned_output_file = self.config.output_dir / "poems.cleaned.jsonl.gz"
-        self.db_path = self.config.output_dir / "poems_index.sqlite"
 
         self.db_manager = DatabaseManager(self.db_path)
         self.processor = PoemProcessor()
@@ -78,7 +77,7 @@ class ScraperOrchestrator:
         self._backoff_base = 0.5
         
     async def run(self):
-        """Méthode d'exécution principale."""
+        """Méthode d'exécution principale avec gestion propre de l'arrêt."""
         logger.info(f"Starting intelligent scraper for '{self.config.lang}.wikisource.org'")
         logger.info(f"Root category: '{self.config.category}'")
         
@@ -97,34 +96,40 @@ class ScraperOrchestrator:
         )
         writer_thread.start()
 
-        async with WikiAPIClient(self.api_endpoint, self.config.workers) as client:
-            producer_task = asyncio.create_task(self._producer(client, page_queue))
+        try:
+            async with WikiAPIClient(self.api_endpoint, self.config.workers) as client:
+                producer_task = asyncio.create_task(self._producer(client, page_queue))
 
-            with tqdm(desc="Processing pages", unit=" page", dynamic_ncols=True) as pbar:
-                consumer_tasks = [
-                    asyncio.create_task(self._consumer(client, page_queue, writer_sync_queue, pbar))
-                    for _ in range(self.config.workers)
-                ]
+                with tqdm(desc="Processing pages", unit=" page", dynamic_ncols=True) as pbar:
+                    consumer_tasks = [
+                        asyncio.create_task(self._consumer(client, page_queue, writer_sync_queue, pbar))
+                        for _ in range(self.config.workers)
+                    ]
 
-                await producer_task
-                await page_queue.join()
+                    await producer_task
+                    await page_queue.join()
 
-                for task in consumer_tasks:
-                    task.cancel()
-                await asyncio.gather(*consumer_tasks, return_exceptions=True)
+                    for task in consumer_tasks:
+                        task.cancel()
+                    await asyncio.gather(*consumer_tasks, return_exceptions=True)
 
-                writer_sync_queue.put(None)
-                writer_thread.join()
-        
-        if self.tree_logger:
-            self.tree_logger.write_log_files()
-        
-        await self.db_manager.close()
-        logger.info("Scraping finished.")
-        logger.info(f"Total poems processed and saved: {self.processed_counter}")
-        logger.info(
-            f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}"
-        )
+        finally:
+            logger.info("Shutdown sequence initiated. Finalizing operations...")
+            
+            writer_sync_queue.put(None)
+            writer_thread.join()
+            logger.info("Writer thread finished processing remaining items.")
+            
+            if self.tree_logger:
+                self.tree_logger.write_log_files()
+            
+            await self.db_manager.close()
+            
+            logger.info("Scraping finished.")
+            logger.info(f"Total poems processed and saved: {self.processed_counter}")
+            logger.info(
+                f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}"
+            )
 
     async def _queue_page_if_new(self, queue: asyncio.Queue, page_item: Dict[str, Any]):
         """

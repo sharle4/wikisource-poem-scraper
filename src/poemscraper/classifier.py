@@ -53,6 +53,12 @@ class PageClassifier:
         self.categories = {
             c["title"].split(":")[-1] for c in page_data.get("categories", [])
         }
+        self.internal_prefixes_to_ignore = [
+            get_localized_prefix(lang, "category"),
+            get_localized_prefix(lang, "author"),
+            "Portail", "Aide", "Wikisource", "Fichier", "Spécial",
+            "Livre", "Discussion", "Modèle", "Projet"
+        ]
 
     def _get_page_signals(self) -> dict:
         """Analyse la page une seule fois pour extraire des signaux booléens."""
@@ -111,13 +117,6 @@ class PageClassifier:
         """
         titles: Set[str] = set()
         
-        author_prefix = get_localized_prefix(self.lang, "author")
-        category_prefix = get_localized_prefix(self.lang, "category")
-        internal_prefixes_to_ignore = [
-            category_prefix, author_prefix, "Portail", "Aide", "Wikisource", 
-            "Fichier", "Spécial", "Livre", "Discussion", "Modèle"
-        ]
-
         links = self.soup.select('a[href][title]')
 
         normalized_self_title = re.sub(r"\s*\([^)]*\)", "", self.title or "")
@@ -130,7 +129,7 @@ class PageClassifier:
             if not href.startswith("/wiki/"):
                 continue
             
-            if any(link_title.startswith(f"{prefix}:") for prefix in internal_prefixes_to_ignore) or \
+            if any(link_title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore) or \
                "action=edit" in href or "&redlink=1" in href:
                 continue
 
@@ -156,104 +155,83 @@ class PageClassifier:
         logger.info(f"Extrait {len(titles)} titres de version depuis la page hub '{self.title}'.")
         return titles
 
-    def extract_collection_sub_pages(self) -> Set[str]:
-        """
-        Extrait les titres des sous-pages (poèmes, éditions) pour une POETIC_COLLECTION.
-        Cette méthode utilise des stratégies basées sur la structure (TOC, en-têtes).
-        """
-        toc_element = self.soup.select_one("div.ws-summary, div#toc, div.ws_summary")
-        if toc_element:
-            logger.debug(f"'{self.title}': Élément TOC trouvé. Extraction des liens.")
-            return self._extract_links_from_collection_element(toc_element)
+    def _is_valid_poem_link(self, link: Tag) -> bool:
+        """Vérifie si un tag <a> est un lien plausible vers un poème."""
+        if not isinstance(link, Tag) or link.name != 'a':
+            return False
+        href = link.get('href', '')
+        title = link.get('title', '')
+        if not href.startswith('/wiki/') or '&redlink=1' in href or 'action=edit' in href:
+            return False
+        if any(title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore):
+            return False
+        if href.startswith('#'):
+            return False
+        return True
 
-        editions_header = self.soup.find(["h2", "h3"], string=re.compile(r"^\s*Éditions\s*$", re.I))
-        if editions_header:
-            next_element = editions_header.find_next_sibling()
-            if next_element and next_element.name in ['ul', 'ol', 'dl']:
-                logger.debug(f"'{self.title}': En-tête 'Éditions' trouvé. Extraction des liens de la liste suivante.")
-                return self._extract_links_from_collection_element(next_element)
-
-        content_area = self.soup.select_one(".mw-parser-output") or self.soup
-        logger.debug(f"'{self.title}': Aucun conteneur spécifique trouvé. Recherche dans toutes les listes de la zone de contenu.")
-        return self._extract_links_from_collection_element(content_area)
-            
-
-    def _extract_links_from_collection_element(self, element: Tag) -> Set[str]:
+    def _is_section_title_element(self, element: Tag) -> bool:
         """
-        Factorisation de l'extraction de liens depuis un élément BeautifulSoup pour une collection.
-        Extrait les liens internes valides depuis des structures de listes (<li>) ou des tables des matières (div.tableItem).
+        Détermine si un élément agit comme un titre de section.
+        C'est le cas s'il contient du texte significatif mais aucun lien valide.
         """
-        titles: Set[str] = set()
-        author_prefix = get_localized_prefix(self.lang, "author")
-        category_prefix = get_localized_prefix(self.lang, "category")
+        if not isinstance(element, Tag):
+            return False
         
-        links = element.select('li a[href], .tableItem a[href]')
-        
-        if not links:
-            links = element.select('a[href]')
-
-        for link in links:
-            href = link.get("href", "")
+        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+            return True
             
-            if not href or not href.startswith("/wiki/"):
-                continue
+        if element.name == 'dt':
+            return True
 
-            link_title = link.get('title', '')
-            
-            try:
-                if not link_title:
-                    path = href.split("wiki/", 1)[1]
-                    raw_title = path.split("#", 1)[0]
-                    link_title = unquote(raw_title).replace("_", " ")
+        has_valid_link = element.find(self._is_valid_poem_link) is not None
+        if has_valid_link:
+            return False
 
-                if not link_title or link_title == self.title:
-                    continue
-
-                if any(
-                    link_title.startswith(f"{prefix}:")
-                    for prefix in [category_prefix, author_prefix, "Portail", "Aide", "Wikisource", "Fichier", "Spécial", "Livre"]
-                ) or "action=edit" in href:
-                    continue
-
-                titles.add(link_title)
-            except Exception as e:
-                logger.warning(f"Impossible d'extraire le titre de l'URL '{href}': {e}")
-                
-        logger.info(f"Extrait {len(titles)} titres de sous-pages de la collection '{self.title}'.")
-        return titles
+        text = element.get_text(strip=True)
+        return bool(text) and len(text) > 1 and len(text) < 150
 
     def extract_ordered_collection_links(self) -> List[Tuple[str, PageType]]:
         """
-        NOUVEAU: Extrait les liens et titres de section d'un recueil EN CONSERVANT L'ORDRE.
-        Tente d'identifier les éléments qui sont des titres de section (non-liens).
-        Retourne une liste de tuples (texte_element, type_element).
+        Extrait les liens et titres de section d'un recueil en CONSERVANT L'ORDRE.
+        Implémente un moteur de parsing structurel unifié pour une compatibilité maximale.
         """
         ordered_items: List[Tuple[str, PageType]] = []
-        
-        toc_element = self.soup.select_one("div.ws-summary, div#toc, div.ws_summary")
-        if toc_element:
-            list_items = toc_element.select('li')
-            for item in list_items:
-                link = item.find('a', href=re.compile(r'^/wiki/'), recursive=False)
-                if link and link.get('title'):
-                    ordered_items.append((link['title'], PageType.POEM))
-                else:
-                    section_title = item.get_text(strip=True)
-                    if section_title:
-                        ordered_items.append((section_title, PageType.SECTION_TITLE))
-            if ordered_items:
-                return ordered_items
+        content_area = self.soup.select_one(".mw-parser-output")
 
-        content_area = self.soup.select_one(".mw-parser-output") or self.soup
-        for element in content_area.find_all(['h2', 'h3', 'ul', 'ol', 'dl', 'div'], recursive=False):
-            if element.name in ['h2', 'h3']:
-                section_title = element.get_text(strip=True)
-                if section_title:
-                    ordered_items.append((section_title, PageType.SECTION_TITLE))
-            elif element.name in ['ul', 'ol', 'dl']:
-                for link in element.select('li a[href]'):
-                    if link.get('title') and link['href'].startswith('/wiki/'):
+        if not content_area:
+            logger.warning(f"Impossible de trouver la zone de contenu '.mw-parser-output' pour '{self.title}'.")
+            return []
+
+        logger.debug(f"Début de l'analyse structurelle séquentielle pour '{self.title}'.")
+        
+        for element in content_area.find_all(recursive=False):
+            
+            if self._is_section_title_element(element):
+                title_text = element.get_text(strip=True)
+                logger.debug(f"Élément '{element.name}' identifié comme SECTION_TITLE: '{title_text}'")
+                ordered_items.append((title_text, PageType.SECTION_TITLE))
+                continue
+
+            if element.name in ['ul', 'ol', 'dl']:
+                logger.debug(f"Analyse du conteneur de liste '{element.name}'.")
+                list_item_tags = 'dd' if element.name == 'dl' else 'li'
+                for item in element.find_all(list_item_tags, recursive=False):
+                    link = item.find('a')
+                    if self._is_valid_poem_link(link):
+                        logger.debug(f"  Poème trouvé dans '{list_item_tags}': '{link['title']}'")
+                        ordered_items.append((link['title'], PageType.POEM))
+                    elif self._is_section_title_element(item):
+                         title_text = item.get_text(strip=True)
+                         logger.debug(f"  Section trouvée dans '{list_item_tags}': '{title_text}'")
+                         ordered_items.append((title_text, PageType.SECTION_TITLE))
+                continue
+            
+            links_in_element = element.find_all('a')
+            if links_in_element:
+                 for link in links_in_element:
+                    if self._is_valid_poem_link(link):
+                        logger.debug(f"Poème trouvé dans un conteneur simple '{element.name}': '{link['title']}'")
                         ordered_items.append((link['title'], PageType.POEM))
 
-        logger.info(f"Extrait {len(ordered_items)} éléments ordonnés (poèmes/sections) de la collection '{self.title}'.")
+        logger.info(f"Analyse structurelle terminée pour '{self.title}'. {len(ordered_items)} éléments extraits.")
         return ordered_items

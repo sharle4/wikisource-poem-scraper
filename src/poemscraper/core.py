@@ -7,6 +7,7 @@ import queue
 import threading
 from typing import Set, Optional, Dict, Any, List
 from datetime import datetime, timezone
+import logging.handlers
 
 import re
 import mwparserfromhell
@@ -19,10 +20,13 @@ from .classifier import PageClassifier, PageType
 from .database import DatabaseManager, connect_sync_db
 from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
-from .schemas import PoemSchema, Collection, Section, PoemInfo
+from .schemas import PoemSchema, Collection, Section, PoemInfo, CollectionComponent
 from .cleaner import process_poem
 from .tree_logger import HierarchicalLogger
 from .log_manager import LogManager
+
+collection_log = logging.getLogger('collection_processing')
+collection_log.propagate = False
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,20 @@ class ScraperOrchestrator:
         self.write_cleaned = str(getattr(config, "cleaned", "true")).lower() == "true"
 
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.config.output_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+        if not collection_log.handlers:
+            log_path = self.config.output_dir / "logs" / "collection_processing.log"
+            handler = logging.handlers.RotatingFileHandler(
+                log_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'
+            )
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            collection_log.addHandler(handler)
+            collection_log.setLevel(logging.DEBUG)
+            collection_log.info("Logger de traitement des recueils initialisé.")
+
+
         self.output_file = self.config.output_dir / "poems.jsonl.gz"
         self.cleaned_output_file = self.config.output_dir / "poems.cleaned.jsonl.gz"
         self.db_path = self.config.output_dir / "poems_index.sqlite"
@@ -183,6 +201,11 @@ class ScraperOrchestrator:
     ):
         """Logique de traitement pour une seule page, extraite pour être réutilisable."""
         page_info = queue_item['page_info']
+        page_id = page_info["pageid"]
+        page_title = page_info.get('title', 'N/A')
+        
+        collection_log.debug(f"PROCESSING page '{page_title}' (id:{page_id}). Context received: {json.dumps({k: v if not isinstance(v, Collection) else v.model_dump(exclude={'content'}) for k, v in queue_item.items() if k != 'page_info'}, default=str)}")
+
         parent_title = queue_item['parent_title']
         author_cat = queue_item['author_cat']
         hub_info = queue_item.get("hub_info")
@@ -190,10 +213,7 @@ class ScraperOrchestrator:
         collection_context = queue_item.get("collection_context")
         order_in_collection = queue_item.get("order_in_collection")
         section_title_in_collection = queue_item.get("section_title_in_collection")
-        is_first_poem = queue_item.get("is_first_poem_in_collection", False)
-        
-        page_id = page_info["pageid"]
-        page_title = page_info.get('title', 'N/A')
+        is_first_poem_in_collection = queue_item.get("is_first_poem_in_collection", False)
 
         try:
             page_data = await self._retry_call(
@@ -207,6 +227,7 @@ class ScraperOrchestrator:
             final_page_id = page_data["pageid"]
             if final_page_id != page_id and final_page_id in self.processed_ids:
                 self.processed_ids.add(page_id)
+                collection_log.debug(f"SKIPPING page '{page_title}' (id:{page_id}) because its redirect target (id:{final_page_id}) was already processed.")
                 return
 
             timestamp = datetime.now(timezone.utc)
@@ -226,6 +247,8 @@ class ScraperOrchestrator:
             
             classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
             page_type, classification_reason = classifier.classify()
+            
+            collection_log.info(f"CLASSIFIED page '{page_title}' (id:{final_page_id}) as {page_type.name}. Reason: {classification_reason}")
 
             if self.tree_logger:
                 self.tree_logger.add_node(author_cat, parent_title, page_title, page_type, classification_reason, timestamp)
@@ -237,7 +260,7 @@ class ScraperOrchestrator:
                         collection_context=collection_context,
                         order_in_collection=order_in_collection,
                         section_title_in_collection=section_title_in_collection,
-                        is_first_poem_in_collection=is_first_poem
+                        is_first_poem_in_collection=is_first_poem_in_collection
                     )
                     await self._writer_put(writer_queue, poem_data)
                 except PoemParsingError as e:
@@ -267,6 +290,7 @@ class ScraperOrchestrator:
 
         except Exception as e:
             logger.error(f"Error processing page {page_title} (ID: {page_id}): {e}", exc_info=False)
+            collection_log.error(f"CRITICAL FAILURE processing page '{page_title}' (id:{page_id}): {e}", exc_info=True)
             self.skipped_counter += 1
         finally:
             self.processed_ids.add(page_id)
@@ -276,95 +300,123 @@ class ScraperOrchestrator:
     async def _process_collection(
         self, client: WikiAPIClient, writer_queue: queue.Queue, pbar: tqdm, context: Dict[str, Any]
     ):
-        """Orchestre le traitement d'une page de recueil pour en extraire la structure."""
+        """
+        Orchestre le traitement d'une page de recueil pour en extraire la structure.
+        Cette fonction a été ENTIÈREMENT RÉÉCRITE pour être plus robuste et détaillée.
+        """
         page_data = context['page_data']
-        soup = context['soup']
-        author_cat = context['author_cat']
-        hub_info = context.get('hub_info')
-        parent_title = context.get('parent_title')
-        timestamp = context.get('timestamp', datetime.now(timezone.utc))
-        
         page_id = page_data['pageid']
         page_title = page_data['title']
         page_url = page_data.get('fullurl', '')
-        
-        logger.info(f"Page '{page_title}' is a POETIC_COLLECTION. Extracting ordered structure.")
-        
-        classifier = PageClassifier(page_data, soup, self.config.lang, mwparserfromhell.parse(""))
-        ordered_links = classifier.extract_ordered_collection_links()
-        
-        poem_titles_to_resolve = [title for title, type in ordered_links if type == PageType.POEM]
-        
-        self.log_manager.log_collection(
-            timestamp.isoformat(), page_title, page_url, parent_title, 
-            "is_poetic_collection", len(poem_titles_to_resolve)
-        )
-        
-        if not ordered_links:
-            logger.warning(f"Collection '{page_title}' did not yield any ordered links.")
-            return
+        author_cat = context['author_cat']
+        soup = context['soup']
 
-        collection_obj = Collection(
-            page_id=page_id,
-            title=page_title,
-            url=page_url,
-            author=author_cat.split(':')[-1]
-        )
+        collection_log.info(f"--- Starting processing for POETIC_COLLECTION: '{page_title}' (id:{page_id}) ---")
         
-        poem_titles_to_resolve = [title for title, type in ordered_links if type == PageType.POEM]
-        resolved_pages = await self._resolve_titles_to_pages(client, poem_titles_to_resolve)
-
-        current_section_title = None
-        poem_counter_in_collection = 0
-        is_first_poem = True
-
-        for title, item_type in ordered_links:
-            if item_type == PageType.SECTION_TITLE:
-                current_section_title = title
-                logger.debug(f"Identified section '{title}' in '{page_title}'.")
-                collection_obj.content.append(Section(title=title))
+        try:
+            classifier = PageClassifier(page_data, soup, self.config.lang, mwparserfromhell.parse(""))
+            ordered_links = classifier.extract_ordered_collection_links()
+            collection_log.info(f"Found {len(ordered_links)} ordered items (poems/sections) in '{page_title}'.")
             
-            elif item_type == PageType.POEM:
-                if title in resolved_pages:
-                    page_info = resolved_pages[title]
-                    
-                    poem_info = PoemInfo(title=title, page_id=page_info['pageid'], url=f"https://{self.config.lang}.wikisource.org/?curid={page_info['pageid']}")
-                    if isinstance(collection_obj.content[-1], Section):
-                        collection_obj.content[-1].poems.append(poem_info)
-                    else:
-                        collection_obj.content.append(poem_info)
+            if not ordered_links:
+                logger.warning(f"Collection '{page_title}' did not yield any ordered links.")
+                collection_log.warning(f"Extraction from '{page_title}' yielded no links. Aborting processing for this collection.")
+                self.log_manager.log_collection(datetime.now(timezone.utc).isoformat(), page_title, page_url, context.get('parent_title'), "no_links_found", 0)
+                return
 
-                    await self._process_single_page(client, writer_queue, pbar, {
-                        'page_info': page_info,
-                        'parent_title': page_title,
-                        'author_cat': author_cat,
-                        'hub_info': hub_info,
-                        'collection_context': collection_obj,
-                        'order_in_collection': poem_counter_in_collection,
-                        'section_title_in_collection': current_section_title,
-                        'is_first_poem_in_collection': is_first_poem
-                    })
-                    poem_counter_in_collection += 1
-                    is_first_poem = False
+            collection_obj = Collection(
+                page_id=page_id,
+                title=page_title,
+                url=page_url,
+                author=author_cat.split(':')[-1]
+            )
+            
+            poem_titles_to_resolve = [title for title, type in ordered_links if type == PageType.POEM]
+            collection_log.debug(f"Resolving {len(poem_titles_to_resolve)} poem titles: {poem_titles_to_resolve}")
+            resolved_pages = await self._resolve_titles_to_pages(client, poem_titles_to_resolve)
+            collection_log.info(f"Successfully resolved {len(resolved_pages)} out of {len(poem_titles_to_resolve)} titles.")
+            
+            self.log_manager.log_collection(
+                datetime.now(timezone.utc).isoformat(), page_title, page_url, 
+                context.get('parent_title'), "is_poetic_collection", len(resolved_pages)
+            )
+
+            current_section_obj: Optional[Section] = None
+            poem_counter_in_collection = 0
+            is_first_poem_processed = True
+
+            for title, item_type in ordered_links:
+                if item_type == PageType.SECTION_TITLE:
+                    collection_log.debug(f"Identified SECTION: '{title}' in '{page_title}'.")
+                    current_section_obj = Section(title=title)
+                    collection_obj.content.append(current_section_obj)
+                
+                elif item_type == PageType.POEM:
+                    if title in resolved_pages:
+                        page_info = resolved_pages[title]
+                        poem_info = PoemInfo(title=title, page_id=page_info['pageid'], url=f"https://{self.config.lang}.wikisource.org/?curid={page_info['pageid']}")
+                        
+                        if current_section_obj:
+                            current_section_obj.poems.append(poem_info)
+                        else:
+                            collection_obj.content.append(poem_info)
+                        
+                        section_title_for_poem = current_section_obj.title if current_section_obj else None
+                        
+                        queue_payload = {
+                            'page_info': page_info,
+                            'parent_title': page_title,
+                            'author_cat': author_cat,
+                            'hub_info': context.get('hub_info'),
+                            'collection_context': collection_obj,
+                            'order_in_collection': poem_counter_in_collection,
+                            'section_title_in_collection': section_title_for_poem,
+                            'is_first_poem_in_collection': is_first_poem_processed
+                        }
+                        
+                        collection_log.debug(f"QUEUING poem '{title}' (order:{poem_counter_in_collection}) from section '{section_title_for_poem}' with full collection context.")
+                        
+                        await self._process_single_page(client, writer_queue, pbar, queue_payload)
+                        
+                        poem_counter_in_collection += 1
+                        is_first_poem_processed = False
+                    else:
+                        collection_log.warning(f"Could not resolve title '{title}' from collection '{page_title}'. It will be skipped.")
+            
+            collection_log.info(f"--- Finished processing for POETIC_COLLECTION: '{page_title}'. Queued {poem_counter_in_collection} poems. ---")
+        
+        except Exception as e:
+            collection_log.error(f"CRITICAL FAILURE during _process_collection for '{page_title}': {e}", exc_info=True)
+
 
     async def _resolve_titles_to_pages(self, client: WikiAPIClient, titles: List[str]) -> Dict[str, Dict]:
         """Résout une liste de titres en objets page_info."""
         resolved = {}
+        if not titles:
+            return resolved
+            
         for i in range(0, len(titles), 50):
             batch = titles[i:i+50]
-            query_result = await client.get_page_info_and_redirects(batch)
-            if not query_result or not query_result.get("pages"):
-                continue
-            
-            redirect_map = {r['from']: r['to'] for r in query_result.get('redirects', [])}
-            
-            for p_info in query_result.get("pages", []):
-                if p_info.get("missing"): continue
-                resolved[p_info['title']] = p_info
+            try:
+                query_result = await client.get_page_info_and_redirects(batch)
+                if not query_result or not query_result.get("pages"):
+                    collection_log.warning(f"API call to resolve titles returned no pages for batch: {batch}")
+                    continue
+                
+                redirect_map = {r['from']: r['to'] for r in query_result.get('redirects', [])}
+                
+                for p_info in query_result.get("pages", []):
+                    if p_info.get("missing"):
+                        collection_log.warning(f"Title '{p_info['title']}' is marked as missing by API.")
+                        continue
+                    resolved[p_info['title']] = p_info
 
-            for from_title, to_title in redirect_map.items():
-                if to_title in resolved:
-                    resolved[from_title] = resolved[to_title]
+                for from_title, to_title in redirect_map.items():
+                    if to_title in resolved:
+                        resolved[from_title] = resolved[to_title]
+            except Exception as e:
+                logger.error(f"Failed to resolve batch of titles: {batch}. Error: {e}")
+                collection_log.error(f"API error resolving titles batch: {e}", exc_info=True)
 
         return resolved
 

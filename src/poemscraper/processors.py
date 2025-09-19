@@ -11,6 +11,7 @@ from .parsing import PoemParser
 from .exceptions import PoemParsingError
 
 logger = logging.getLogger(__name__)
+collection_log = logging.getLogger('collection_processing')
 
 class PoemProcessor:
     """
@@ -31,6 +32,14 @@ class PoemProcessor:
         is_first_poem_in_collection: bool = False
     ) -> PoemSchema:
         """Méthode de traitement principale pour une seule page."""
+        page_title = page_data.get("title", "N/A")
+        page_id = page_data.get("pageid", -1)
+        
+        if collection_context:
+            collection_log.debug(f"PoemProcessor received context for '{page_title}' (id:{page_id}): collection='{collection_context.title}' (id:{collection_context.page_id})")
+        else:
+            collection_log.debug(f"PoemProcessor received NO collection context for '{page_title}' (id:{page_id}). Will rely on metadata fallback.")
+
         wikitext = page_data["revisions"][0]["content"]
 
         structure = PoemParser.extract_poem_structure(soup)
@@ -60,6 +69,11 @@ class PoemProcessor:
             hub_title = None
             hub_page_id = page_data["pageid"]
 
+        final_collection_page_id = collection_context.page_id if collection_context else None
+        final_collection_title = collection_context.title if collection_context else metadata_obj.source_collection
+
+        collection_log.info(f"FINALIZING poem '{page_title}' (id:{page_id}): collection_page_id={final_collection_page_id}, collection_title='{final_collection_title}'")
+
         poem_obj = PoemSchema(
             page_id=page_data["pageid"],
             revision_id=page_data["revisions"][0]["revid"],
@@ -69,8 +83,8 @@ class PoemProcessor:
                 "fullurl",
                 f"https://{lang}.wikisource.org/?curid={page_data['pageid']}",
             ),
-            collection_page_id=collection_context.page_id if collection_context else None,
-            collection_title=collection_context.title if collection_context else metadata_obj.source_collection,
+            collection_page_id=final_collection_page_id,
+            collection_title=final_collection_title,
             section_title=section_title_in_collection,
             poem_order=order_in_collection,
             collection_structure=collection_context if is_first_poem_in_collection else None,

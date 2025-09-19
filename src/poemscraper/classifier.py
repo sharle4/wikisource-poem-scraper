@@ -161,18 +161,24 @@ class PageClassifier:
             return False
         href = link.get('href', '')
         title = link.get('title', '')
+        if not title or not href:
+            return False
         if not href.startswith('/wiki/') or '&redlink=1' in href or 'action=edit' in href:
             return False
         if any(title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore):
             return False
         if href.startswith('#'):
             return False
+        if link.find('img'):
+            return False
+        if title == self.title:
+            return False
         return True
 
     def _is_section_title_element(self, element: Tag) -> bool:
         """
         Détermine si un élément agit comme un titre de section.
-        C'est le cas s'il contient du texte significatif mais aucun lien valide.
+        Logique améliorée pour plus de précision.
         """
         if not isinstance(element, Tag):
             return False
@@ -183,17 +189,26 @@ class PageClassifier:
         if element.name == 'dt':
             return True
 
-        has_valid_link = element.find(self._is_valid_poem_link) is not None
+        has_valid_link = element.find(self._is_valid_poem_link)
         if has_valid_link:
             return False
 
         text = element.get_text(strip=True)
-        return bool(text) and len(text) > 1 and len(text) < 150
+        if not text or len(text) <= 1 or len(text) > 150:
+            return False
+        
+        if element.find(['b', 'strong', 'i', 'em']):
+            return True
+            
+        if element.name in ['li', 'p'] and not has_valid_link:
+            return True
+
+        return False
 
     def extract_ordered_collection_links(self) -> List[Tuple[str, PageType]]:
         """
-        Extrait les liens et titres de section d'un recueil en CONSERVANT L'ORDRE.
-        Implémente un moteur de parsing structurel unifié pour une compatibilité maximale.
+        MOTEUR DE PARSING STRUCTUREL EXPERT v2
+        Extrait les liens et titres de section en analysant la structure sémantique du document.
         """
         ordered_items: List[Tuple[str, PageType]] = []
         content_area = self.soup.select_one(".mw-parser-output")
@@ -202,36 +217,57 @@ class PageClassifier:
             logger.warning(f"Impossible de trouver la zone de contenu '.mw-parser-output' pour '{self.title}'.")
             return []
 
-        logger.debug(f"Début de l'analyse structurelle séquentielle pour '{self.title}'.")
+        logger.debug(f"Début de l'analyse structurelle experte pour '{self.title}'.")
         
-        for element in content_area.find_all(recursive=False):
-            
+        candidate_elements = content_area.find_all(['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol', 'dl', 'div'])
+
+        last_added_title = None
+
+        for element in candidate_elements:
+            if any(parent == element for parent in element.find_parents(['ul', 'ol', 'dl'])):
+                 continue
+
             if self._is_section_title_element(element):
                 title_text = element.get_text(strip=True)
-                logger.debug(f"Élément '{element.name}' identifié comme SECTION_TITLE: '{title_text}'")
-                ordered_items.append((title_text, PageType.SECTION_TITLE))
+                if title_text != last_added_title:
+                    logger.debug(f"Élément '{element.name}' identifié comme SECTION_TITLE: '{title_text}'")
+                    ordered_items.append((title_text, PageType.SECTION_TITLE))
+                    last_added_title = title_text
                 continue
 
             if element.name in ['ul', 'ol', 'dl']:
                 logger.debug(f"Analyse du conteneur de liste '{element.name}'.")
                 list_item_tags = 'dd' if element.name == 'dl' else 'li'
                 for item in element.find_all(list_item_tags, recursive=False):
-                    link = item.find('a')
-                    if self._is_valid_poem_link(link):
-                        logger.debug(f"  Poème trouvé dans '{list_item_tags}': '{link['title']}'")
-                        ordered_items.append((link['title'], PageType.POEM))
+                    link = item.find(self._is_valid_poem_link)
+                    if link and link.get('title'):
+                        title = link['title']
+                        if title != last_added_title:
+                            logger.debug(f"  Poème trouvé dans '{list_item_tags}': '{title}'")
+                            ordered_items.append((title, PageType.POEM))
+                            last_added_title = title
                     elif self._is_section_title_element(item):
                          title_text = item.get_text(strip=True)
-                         logger.debug(f"  Section trouvée dans '{list_item_tags}': '{title_text}'")
-                         ordered_items.append((title_text, PageType.SECTION_TITLE))
+                         if title_text != last_added_title:
+                            logger.debug(f"  Section trouvée dans '{list_item_tags}': '{title_text}'")
+                            ordered_items.append((title_text, PageType.SECTION_TITLE))
+                            last_added_title = title_text
                 continue
             
-            links_in_element = element.find_all('a')
-            if links_in_element:
-                 for link in links_in_element:
-                    if self._is_valid_poem_link(link):
-                        logger.debug(f"Poème trouvé dans un conteneur simple '{element.name}': '{link['title']}'")
-                        ordered_items.append((link['title'], PageType.POEM))
+            link = element.find(self._is_valid_poem_link)
+            if link and link.get('title'):
+                title = link['title']
+                if title != last_added_title:
+                    logger.debug(f"Poème trouvé dans un conteneur simple '{element.name}': '{title}'")
+                    ordered_items.append((title, PageType.POEM))
+                    last_added_title = title
+        
+        final_items = []
+        seen_titles = set()
+        for title, page_type in ordered_items:
+            if title not in seen_titles:
+                final_items.append((title, page_type))
+                seen_titles.add(title)
 
-        logger.info(f"Analyse structurelle terminée pour '{self.title}'. {len(ordered_items)} éléments extraits.")
-        return ordered_items
+        logger.info(f"Analyse structurelle terminée pour '{self.title}'. {len(final_items)} éléments uniques extraits.")
+        return final_items

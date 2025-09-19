@@ -70,6 +70,7 @@ class ScraperOrchestrator:
             logger.info(f"Cleaned output enabled. A second file will be written to: {self.cleaned_output_file}")
 
         self.processed_ids: Set[int] = set()
+        self.scheduled_or_processed_ids: Set[int] = set()
         self.processed_counter = 0
         self.skipped_counter = 0
         self._net_timeout_seconds = 25
@@ -85,6 +86,7 @@ class ScraperOrchestrator:
 
         if self.config.resume:
             self.processed_ids = await self.db_manager.get_all_processed_ids()
+            self.scheduled_or_processed_ids.update(self.processed_ids)
             logger.info(f"Resume mode: Loaded {len(self.processed_ids)} already processed page IDs.")
 
         page_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -123,6 +125,20 @@ class ScraperOrchestrator:
         logger.info(
             f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}"
         )
+
+    async def _queue_page_if_new(self, queue: asyncio.Queue, page_item: Dict[str, Any]):
+        """
+        CORRECTIF ANTI-BOUCLE: Ajoute une page à la file d'attente uniquement si son ID
+        n'a pas déjà été programmé ou traité.
+        """
+        page_id = page_item['page_info']['pageid']
+        if page_id not in self.scheduled_or_processed_ids:
+            self.scheduled_or_processed_ids.add(page_id)
+            await queue.put(page_item)
+            return True
+        else:
+            logger.debug(f"Skipping enqueue for page ID {page_id} as it's already scheduled or processed.")
+            return False
 
     async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue):
         """Trouve et met en file les pages initiales des catégories d'auteurs."""
@@ -167,13 +183,15 @@ class ScraperOrchestrator:
                     author_cat_full_title = f"{cat_prefix}:{author_cat}"
                     async for page in client.get_pages_in_category_generator(author_cat, self.config.lang):
                         if self.config.limit and enqueued_count >= self.config.limit: break
-                        if page['pageid'] not in self.processed_ids:
-                            await queue.put({
-                                'page_info': page,
-                                'parent_title': author_cat_full_title,
-                                'author_cat': author_cat_full_title
-                            })
+                        
+                        page_item = {
+                            'page_info': page,
+                            'parent_title': author_cat_full_title,
+                            'author_cat': author_cat_full_title
+                        }
+                        if await self._queue_page_if_new(queue, page_item):
                             enqueued_count += 1
+
                     pbar.update(1)
                     if self.config.limit and enqueued_count >= self.config.limit: break
         
@@ -228,6 +246,7 @@ class ScraperOrchestrator:
             if final_page_id != page_id and final_page_id in self.processed_ids:
                 self.processed_ids.add(page_id)
                 collection_log.debug(f"SKIPPING page '{page_title}' (id:{page_id}) because its redirect target (id:{final_page_id}) was already processed.")
+                self.scheduled_or_processed_ids.add(page_id)
                 return
 
             timestamp = datetime.now(timezone.utc)
@@ -274,13 +293,20 @@ class ScraperOrchestrator:
                 })
                 self.skipped_counter += 1
 
+            elif page_type == PageType.POETIC_COLLECTION:
+                await self._process_collection(client, page_queue, pbar, {
+                    'page_data': page_data, 'soup': soup, 'author_cat': author_cat, 'hub_info': hub_info,
+                    'parent_title': parent_title, 'timestamp': timestamp
+                })
+                self.skipped_counter += 1
+
             elif page_type == PageType.MULTI_VERSION_HUB:
                 logger.info(f"Page '{page_title}' is a MULTI_VERSION_HUB ({classification_reason}). Extracting sub-pages.")
                 sub_titles = classifier.extract_hub_sub_pages()
                 self.log_manager.log_hub(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason, len(sub_titles))
                 if sub_titles:
                     new_hub_info = {"title": page_title, "page_id": final_page_id}
-                    await self._enqueue_new_titles(client, writer_queue, pbar, list(sub_titles), current_parent_title=page_title, author_cat=author_cat, hub_info=new_hub_info)
+                    await self._enqueue_new_titles(client, page_queue, pbar, list(sub_titles), current_parent_title=page_title, author_cat=author_cat, hub_info=new_hub_info)
                 self.skipped_counter += 1
             
             else:
@@ -294,15 +320,17 @@ class ScraperOrchestrator:
             self.skipped_counter += 1
         finally:
             self.processed_ids.add(page_id)
-            if 'final_page_id' in locals(): self.processed_ids.add(final_page_id)
+            if 'final_page_id' in locals():
+                self.processed_ids.add(final_page_id)
+                self.scheduled_or_processed_ids.add(final_page_id)
             pbar.update(1)
 
     async def _process_collection(
-        self, client: WikiAPIClient, writer_queue: queue.Queue, pbar: tqdm, context: Dict[str, Any]
+        self, client: WikiAPIClient, page_queue: asyncio.Queue, pbar: tqdm, context: Dict[str, Any]
     ):
         """
-        Orchestre le traitement d'une page de recueil pour en extraire la structure.
-        Cette fonction a été ENTIÈREMENT RÉÉCRITE pour être plus robuste et détaillée.
+        Orchestre le traitement d'une page de recueil.
+        Utilise maintenant _queue_page_if_new pour éviter les boucles.
         """
         page_data = context['page_data']
         page_id = page_data['pageid']
@@ -376,14 +404,16 @@ class ScraperOrchestrator:
                         
                         collection_log.debug(f"QUEUING poem '{title}' (order:{poem_counter_in_collection}) from section '{section_title_for_poem}' with full collection context.")
                         
-                        await self._process_single_page(client, writer_queue, pbar, queue_payload)
-                        
-                        poem_counter_in_collection += 1
-                        is_first_poem_processed = False
+                        if await self._queue_page_if_new(page_queue, queue_payload):
+                            poem_counter_in_collection += 1
+                            is_first_poem_processed = False
+                        else:
+                             collection_log.warning(f"Poem '{title}' from collection '{page_title}' was not queued as it's already scheduled/processed.")
+
                     else:
                         collection_log.warning(f"Could not resolve title '{title}' from collection '{page_title}'. It will be skipped.")
             
-            collection_log.info(f"--- Finished processing for POETIC_COLLECTION: '{page_title}'. Queued {poem_counter_in_collection} poems. ---")
+            collection_log.info(f"--- Finished processing for POETIC_COLLECTION: '{page_title}'. Processed {poem_counter_in_collection} poems. ---")
         
         except Exception as e:
             collection_log.error(f"CRITICAL FAILURE during _process_collection for '{page_title}': {e}", exc_info=True)
@@ -445,21 +475,27 @@ class ScraperOrchestrator:
                 await asyncio.sleep(0.05)
 
     async def _enqueue_new_titles(
-        self, client: WikiAPIClient, writer_queue: queue.Queue, pbar: tqdm, titles: list[str],
+        self, client: WikiAPIClient, page_queue: asyncio.Queue, pbar: tqdm, titles: list[str],
         current_parent_title: str, author_cat: str, hub_info: Optional[dict] = None
     ):
-        """Version modifiée pour mettre en file d'attente les enfants d'un hub."""
+        """
+        Version modifiée pour mettre en file d'attente les enfants d'un hub.
+        Utilise maintenant _queue_page_if_new pour éviter les boucles.
+        """
         logger.debug(f"Resolving {len(titles)} titles from hub '{current_parent_title}'.")
         resolved_pages = await self._resolve_titles_to_pages(client, titles)
         
+        enqueued_count = 0
         for title, page_info in resolved_pages.items():
-            if page_info['pageid'] not in self.processed_ids:
-                await self._process_single_page(client, writer_queue, pbar, {
-                    'page_info': page_info,
-                    'parent_title': current_parent_title,
-                    'author_cat': author_cat,
-                    'hub_info': hub_info
-                })
+            page_item = {
+                'page_info': page_info,
+                'parent_title': current_parent_title,
+                'author_cat': author_cat,
+                'hub_info': hub_info
+            }
+            if await self._queue_page_if_new(page_queue, page_item):
+                enqueued_count += 1
+        logger.debug(f"Enqueued {enqueued_count} new pages from hub '{current_parent_title}'.")
 
     def _sync_writer(self, writer_queue: queue.Queue):
         """Tâche synchrone pour gérer toutes les E/S disque."""

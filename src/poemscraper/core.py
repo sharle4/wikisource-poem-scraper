@@ -131,19 +131,27 @@ class ScraperOrchestrator:
                 f"Total pages skipped (non-poem, collection, etc.): {self.skipped_counter}"
             )
 
-    async def _queue_page_if_new(self, queue: asyncio.Queue, page_item: Dict[str, Any]):
+    async def _schedule_page_if_new(self, queue: asyncio.Queue, page_item: Dict[str, Any]) -> bool:
         """
-        CORRECTIF ANTI-BOUCLE: Ajoute une page à la file d'attente uniquement si son ID
-        n'a pas déjà été programmé ou traité.
+        Met intelligemment une page en file d'attente.
         """
         page_id = page_item['page_info']['pageid']
+        has_new_context = "collection_context" in page_item and page_item["collection_context"] is not None
+
         if page_id not in self.scheduled_or_processed_ids:
             self.scheduled_or_processed_ids.add(page_id)
             await queue.put(page_item)
             return True
-        else:
-            logger.debug(f"Skipping enqueue for page ID {page_id} as it's already scheduled or processed.")
-            return False
+
+        if has_new_context:
+            logger.debug(f"Re-queuing page ID {page_id} to update it with collection context.")
+            collection_log.info(f"Re-scheduling page '{page_item['page_info'].get('title', 'N/A')}' (id:{page_id}) to add collection context.")
+            await queue.put(page_item)
+            return True
+        
+        logger.debug(f"Skipping enqueue for already processed page ID {page_id} (no new context).")
+        return False
+
 
     async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue):
         """Trouve et met en file les pages initiales des catégories d'auteurs."""
@@ -194,7 +202,7 @@ class ScraperOrchestrator:
                             'parent_title': author_cat_full_title,
                             'author_cat': author_cat_full_title
                         }
-                        if await self._queue_page_if_new(queue, page_item):
+                        if await self._schedule_page_if_new(queue, page_item):
                             enqueued_count += 1
 
                     pbar.update(1)
@@ -249,10 +257,11 @@ class ScraperOrchestrator:
                 raise PageProcessingError(f"API call for page ID {page_id} returned no data.")
 
             final_page_id = page_data["pageid"]
+            
             if final_page_id != page_id and final_page_id in self.processed_ids:
                 self.processed_ids.add(page_id)
-                collection_log.debug(f"SKIPPING page '{page_title}' (id:{page_id}) because its redirect target (id:{final_page_id}) was already processed.")
                 self.scheduled_or_processed_ids.add(page_id)
+                collection_log.debug(f"SKIPPING page '{page_title}' (id:{page_id}) because its redirect target (id:{final_page_id}) was already processed.")
                 return
 
             timestamp = datetime.now(timezone.utc)
@@ -329,7 +338,6 @@ class ScraperOrchestrator:
     ):
         """
         Orchestre le traitement d'une page de recueil.
-        Utilise maintenant _queue_page_if_new pour éviter les boucles.
         """
         page_data = context['page_data']
         page_id = page_data['pageid']
@@ -403,7 +411,7 @@ class ScraperOrchestrator:
                         
                         collection_log.debug(f"QUEUING poem '{title}' (order:{poem_counter_in_collection}) from section '{section_title_for_poem}' with full collection context.")
                         
-                        if await self._queue_page_if_new(page_queue, queue_payload):
+                        if await self._schedule_page_if_new(page_queue, queue_payload):
                             poem_counter_in_collection += 1
                             is_first_poem_processed = False
                         else:
@@ -478,8 +486,7 @@ class ScraperOrchestrator:
         current_parent_title: str, author_cat: str, hub_info: Optional[dict] = None
     ):
         """
-        Version modifiée pour mettre en file d'attente les enfants d'un hub.
-        Utilise maintenant _queue_page_if_new pour éviter les boucles.
+        Met en file d'attente les enfants d'un hub.
         """
         logger.debug(f"Resolving {len(titles)} titles from hub '{current_parent_title}'.")
         resolved_pages = await self._resolve_titles_to_pages(client, titles)
@@ -492,7 +499,7 @@ class ScraperOrchestrator:
                 'author_cat': author_cat,
                 'hub_info': hub_info
             }
-            if await self._queue_page_if_new(page_queue, page_item):
+            if await self._schedule_page_if_new(page_queue, page_item):
                 enqueued_count += 1
         logger.debug(f"Enqueued {enqueued_count} new pages from hub '{current_parent_title}'.")
 

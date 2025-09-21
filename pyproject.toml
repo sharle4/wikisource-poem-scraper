@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikisource_poem_scraper"
-version = "4.2.6"
+version = "4.2.7"
 description = "Scraper intelligent et asynchrone pour extraire les poèmes de Wikisource en gérant les recueils et les pages de contenu."
 readme = "README.md"
 authors = [

@@ -213,22 +213,17 @@ class ScraperOrchestrator:
         while True:
             try:
                 queue_item = await page_queue.get()
-                await self._process_single_page(client, writer_queue, pbar, queue_item)
+                await self._process_single_page(client, page_queue, writer_queue, pbar, queue_item)
             except asyncio.CancelledError:
                 break
             finally:
                 page_queue.task_done()
 
     async def _process_single_page(
-        self, client: WikiAPIClient, writer_queue: queue.Queue, pbar: tqdm, queue_item: Dict[str, Any]
+        self, client: WikiAPIClient, page_queue: asyncio.Queue, writer_queue: queue.Queue, pbar: tqdm, queue_item: Dict[str, Any]
     ):
         """Logique de traitement pour une seule page, extraite pour être réutilisable."""
         page_info = queue_item['page_info']
-        page_id = page_info["pageid"]
-        page_title = page_info.get('title', 'N/A')
-        
-        collection_log.debug(f"PROCESSING page '{page_title}' (id:{page_id}). Context received: {json.dumps({k: v if not isinstance(v, Collection) else v.model_dump(exclude={'content'}) for k, v in queue_item.items() if k != 'page_info'}, default=str)}")
-
         parent_title = queue_item['parent_title']
         author_cat = queue_item['author_cat']
         hub_info = queue_item.get("hub_info")
@@ -237,7 +232,13 @@ class ScraperOrchestrator:
         order_in_collection = queue_item.get("order_in_collection")
         section_title_in_collection = queue_item.get("section_title_in_collection")
         is_first_poem_in_collection = queue_item.get("is_first_poem_in_collection", False)
+        
+        page_id = page_info["pageid"]
+        page_title = page_info.get('title', 'N/A')
 
+        collection_log.debug(f"PROCESSING page '{page_title}' (id:{page_id}). Context received: {json.dumps({k: v if not isinstance(v, Collection) else v.model_dump(exclude={'content'}) for k, v in queue_item.items() if k != 'page_info'}, default=str)}")
+
+        
         try:
             page_data = await self._retry_call(
                 lambda: client.get_resolved_page_data(page_id=page_id),
@@ -291,13 +292,6 @@ class ScraperOrchestrator:
                     logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
                     self.skipped_counter += 1
             
-            elif page_type == PageType.POETIC_COLLECTION:
-                await self._process_collection(client, writer_queue, pbar, {
-                    'page_data': page_data, 'soup': soup, 'author_cat': author_cat, 'hub_info': hub_info,
-                    'parent_title': parent_title, 'timestamp': timestamp
-                })
-                self.skipped_counter += 1
-
             elif page_type == PageType.POETIC_COLLECTION:
                 await self._process_collection(client, page_queue, pbar, {
                     'page_data': page_data, 'soup': soup, 'author_cat': author_cat, 'hub_info': hub_info,

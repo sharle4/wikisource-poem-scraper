@@ -70,6 +70,7 @@ class ScraperOrchestrator:
 
         self.processed_ids: Set[int] = set()
         self.scheduled_or_processed_ids: Set[int] = set()
+        self.ids_with_collection_context: Set[int] = set()
         self.processed_counter = 0
         self.skipped_counter = 0
         self._net_timeout_seconds = 25
@@ -86,7 +87,14 @@ class ScraperOrchestrator:
         if self.config.resume:
             self.processed_ids = await self.db_manager.get_all_processed_ids()
             self.scheduled_or_processed_ids.update(self.processed_ids)
+            if self.db_manager.conn:
+                async with self.db_manager.conn.execute("SELECT page_id FROM poems WHERE collection_page_id IS NOT NULL") as cursor:
+                    rows = await cursor.fetchall()
+                    self.ids_with_collection_context.update(row[0] for row in rows)
+            
             logger.info(f"Resume mode: Loaded {len(self.processed_ids)} already processed page IDs.")
+            logger.info(f"Resume mode: Found {len(self.ids_with_collection_context)} poems already linked to a collection.")
+
 
         page_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         writer_sync_queue: queue.Queue[Optional[PoemSchema]] = queue.Queue(maxsize=self.config.workers * 2)
@@ -133,23 +141,28 @@ class ScraperOrchestrator:
 
     async def _schedule_page_if_new(self, queue: asyncio.Queue, page_item: Dict[str, Any]) -> bool:
         """
-        Met intelligemment une page en file d'attente.
+        Met intelligemment une page en file d'attente pour éviter les boucles et
+        permettre une mise à jour contextuelle unique.
         """
         page_id = page_item['page_info']['pageid']
         has_new_context = "collection_context" in page_item and page_item["collection_context"] is not None
 
         if page_id not in self.scheduled_or_processed_ids:
             self.scheduled_or_processed_ids.add(page_id)
+            if has_new_context:
+                self.ids_with_collection_context.add(page_id)
             await queue.put(page_item)
             return True
 
-        if has_new_context:
+        is_updateable = has_new_context and page_id not in self.ids_with_collection_context
+        if is_updateable:
+            self.ids_with_collection_context.add(page_id)
             logger.debug(f"Re-queuing page ID {page_id} to update it with collection context.")
             collection_log.info(f"Re-scheduling page '{page_item['page_info'].get('title', 'N/A')}' (id:{page_id}) to add collection context.")
             await queue.put(page_item)
             return True
         
-        logger.debug(f"Skipping enqueue for already processed page ID {page_id} (no new context).")
+        logger.debug(f"Skipping enqueue for already processed page ID {page_id} (no new context or already updated).")
         return False
 
 
@@ -258,10 +271,11 @@ class ScraperOrchestrator:
 
             final_page_id = page_data["pageid"]
             
-            if final_page_id != page_id and final_page_id in self.processed_ids:
+            is_redirect = final_page_id != page_id
+            if is_redirect and final_page_id in self.ids_with_collection_context:
                 self.processed_ids.add(page_id)
                 self.scheduled_or_processed_ids.add(page_id)
-                collection_log.debug(f"SKIPPING page '{page_title}' (id:{page_id}) because its redirect target (id:{final_page_id}) was already processed.")
+                collection_log.debug(f"SKIPPING redirect '{page_title}' (id:{page_id}) because its target (id:{final_page_id}) already has collection context.")
                 return
 
             timestamp = datetime.now(timezone.utc)
@@ -296,6 +310,12 @@ class ScraperOrchestrator:
                         section_title_in_collection=section_title_in_collection,
                         is_first_poem_in_collection=is_first_poem_in_collection
                     )
+                    if poem_data.collection_page_id is not None:
+                        self.ids_with_collection_context.add(poem_data.page_id)
+                        if is_redirect:
+                            self.ids_with_collection_context.add(page_id)
+
+
                     await self._writer_put(writer_queue, poem_data)
                 except PoemParsingError as e:
                     logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")

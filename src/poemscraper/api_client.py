@@ -8,7 +8,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/4.2.9 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/4.3.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 

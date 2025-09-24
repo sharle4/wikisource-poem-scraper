@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full bg-slate-50 dark:bg-slate-900">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparateur de Corpus Poétique</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .smooth-transition { transition: all 0.3s ease-in-out; }
+        .drop-zone.drag-over { border-color: #4f46e5; background-color: #eef2ff; }
+        .dark .drop-zone.drag-over { border-color: #6366f1; background-color: #312e81; }
+        .drop-zone.loaded { border-color: #22c55e; background-color: #f0fdf4; }
+        .dark .drop-zone.loaded { border-color: #4ade80; background-color: #166534; }
+        summary::-webkit-details-marker { display: none; }
+        summary { list-style-type: none; }
+    </style>
+</head>
+<body class="h-full text-slate-800 dark:text-slate-200 antialiased">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-7xl">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-2">Comparateur de Corpus Poétique</h1>
+            <p class="text-lg text-slate-600 dark:text-slate-400">Chargez deux fichiers <code class="bg-slate-200 dark:bg-slate-700 text-sm px-2 py-1 rounded-md">poems.jsonl.gz</code> pour analyser leurs différences.</p>
+        </header>
+
+        <main>
+            <section id="upload-section" class="grid md:grid-cols-2 gap-8 mb-6">
+                <div id="drop-zone-A" class="drop-zone border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-6 text-center cursor-pointer smooth-transition">
+                    <h2 class="text-xl font-semibold mb-2 text-slate-700 dark:text-slate-300">Corpus A (Ancien)</h2>
+                    <p class="feedback text-slate-500 dark:text-slate-400">Déposez le fichier ici ou cliquez pour sélectionner</p>
+                    <input type="file" class="hidden file-input" accept=".gz">
+                </div>
+                <div id="drop-zone-B" class="drop-zone border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-6 text-center cursor-pointer smooth-transition">
+                    <h2 class="text-xl font-semibold mb-2 text-slate-700 dark:text-slate-300">Corpus B (Nouveau)</h2>
+                    <p class="feedback text-slate-500 dark:text-slate-400">Déposez le fichier ici ou cliquez pour sélectionner</p>
+                    <input type="file" class="hidden file-input" accept=".gz">
+                </div>
+            </section>
+            
+            <div class="text-center mb-8">
+                <button id="compare-btn" disabled class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-slate-400 disabled:cursor-not-allowed disabled:shadow-none smooth-transition">
+                    Comparer les Corpus
+                </button>
+            </div>
+
+            <section id="results-section" class="hidden smooth-transition space-y-6"></section>
+        </main>
+    </div>
+    
+    <!-- TEMPLATES -->
+    <template id="result-summary-template">
+        <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700">
+            <h2 class="text-2xl font-bold text-slate-900 dark:text-white mb-4">Résumé de la Comparaison</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                <div class="bg-slate-100 dark:bg-slate-700/50 p-4 rounded-lg">
+                    <div class="text-3xl font-bold text-slate-900 dark:text-white" id="summary-total-A">0</div>
+                    <div class="text-sm text-slate-500 dark:text-slate-400">Poèmes dans A</div>
+                </div>
+                <div class="bg-slate-100 dark:bg-slate-700/50 p-4 rounded-lg">
+                    <div class="text-3xl font-bold text-slate-900 dark:text-white" id="summary-total-B">0</div>
+                    <div class="text-sm text-slate-500 dark:text-slate-400">Poèmes dans B</div>
+                </div>
+                <div class="bg-green-100 dark:bg-green-900/50 p-4 rounded-lg">
+                    <div class="text-3xl font-bold text-green-700 dark:text-green-300" id="summary-added">0</div>
+                    <div class="text-sm text-green-600 dark:text-green-400">Poèmes Ajoutés</div>
+                </div>
+                <div class="bg-red-100 dark:bg-red-900/50 p-4 rounded-lg">
+                    <div class="text-3xl font-bold text-red-700 dark:text-red-300" id="summary-removed">0</div>
+                    <div class="text-sm text-red-600 dark:text-red-400">Poèmes Supprimés</div>
+                </div>
+                 <div class="bg-yellow-100 dark:bg-yellow-900/50 p-4 rounded-lg col-span-2 md:col-span-4">
+                    <div class="text-3xl font-bold text-yellow-700 dark:text-yellow-300" id="summary-modified">0</div>
+                    <div class="text-sm text-yellow-600 dark:text-yellow-400">Poèmes Modifiés</div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="result-details-template">
+        <details class="bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 overflow-hidden" open>
+            <summary class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 smooth-transition">
+                <div class="flex items-center space-x-3">
+                    <div class="badge-icon w-8 h-8 rounded-full flex items-center justify-center"></div>
+                    <h3 class="text-xl font-bold text-slate-900 dark:text-white"></h3>
+                </div>
+                <svg class="w-6 h-6 text-slate-500 dark:text-slate-400 transform transition-transform details-arrow" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+            </summary>
+            <div class="p-4 border-t border-slate-200 dark:border-slate-700 content-list"></div>
+        </details>
+    </template>
+    
+    <!-- WORKER SCRIPT -->
+    <script id="comparator-worker" type="javascript/worker">
+        function getNestedValue(obj, path) {
+            return path.split('.').reduce((acc, part) => acc && acc[part], obj);
+        }
+
+        function comparePoems(poemA, poemB) {
+            const changes = [];
+            const fieldsToCompare = {
+                'Titre': 'title',
+                'Auteur': 'metadata.author',
+                'Date': 'metadata.publication_date',
+                'Recueil': 'collection_title',
+                'Section': 'section_title',
+                'Ordre': 'poem_order',
+                'Texte (checksum)': 'checksum_sha256'
+            };
+
+            for (const [label, path] of Object.entries(fieldsToCompare)) {
+                const valA = getNestedValue(poemA, path) || null;
+                const valB = getNestedValue(poemB, path) || null;
+                if (valA !== valB) {
+                    changes.push({
+                        field: label,
+                        from: valA,
+                        to: valB,
+                    });
+                }
+            }
+            return changes;
+        }
+
+        self.onmessage = (event) => {
+            const { contentA, contentB } = event.data;
+            try {
+                postMessage({ status: 'parsing' });
+                const poemsA = contentA.trim().split('\n').map(line => JSON.parse(line));
+                const poemsB = contentB.trim().split('\n').map(line => JSON.parse(line));
+                
+                postMessage({ status: 'indexing' });
+                const mapA = new Map(poemsA.map(p => [p.page_id, p]));
+                const mapB = new Map(poemsB.map(p => [p.page_id, p]));
+
+                const added = [];
+                const removed = [];
+                const modified = [];
+
+                postMessage({ status: 'comparing' });
+                const allIds = new Set([...mapA.keys(), ...mapB.keys()]);
+                
+                allIds.forEach(id => {
+                    const poemA = mapA.get(id);
+                    const poemB = mapB.get(id);
+
+                    if (poemA && !poemB) {
+                        removed.push(poemA);
+                    } else if (!poemA && poemB) {
+                        added.push(poemB);
+                    } else if (poemA && poemB) {
+                        const changes = comparePoems(poemA, poemB);
+                        if (changes.length > 0) {
+                            modified.push({ poem: poemB, changes });
+                        }
+                    }
+                });
+
+                postMessage({ status: 'done', results: { added, removed, modified, totalA: mapA.size, totalB: mapB.size } });
+
+            } catch (error) {
+                postMessage({ status: 'error', error: error.message });
+            }
+        };
+    </script>
+    
+    <!-- APP SCRIPT -->
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const dropZones = { A: document.getElementById('drop-zone-A'), B: document.getElementById('drop-zone-B') };
+        const compareBtn = document.getElementById('compare-btn');
+        const resultsSection = document.getElementById('results-section');
+        const fileContents = { A: null, B: null };
+
+        Object.entries(dropZones).forEach(([key, zone]) => {
+            const input = zone.querySelector('.file-input');
+            const feedback = zone.querySelector('.feedback');
+
+            zone.addEventListener('click', () => input.click());
+            input.addEventListener('change', e => handleFile(e.target.files[0], key));
+            
+            zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+            zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+            zone.addEventListener('drop', e => {
+                e.preventDefault();
+                zone.classList.remove('drag-over');
+                handleFile(e.dataTransfer.files[0], key);
+            });
+        });
+
+        function handleFile(file, key) {
+            if (!file) return;
+            const feedback = dropZones[key].querySelector('.feedback');
+            feedback.textContent = `Chargement de ${file.name}...`;
+
+            const reader = new FileReader();
+            reader.onload = event => {
+                try {
+                    const decompressed = pako.inflate(new Uint8Array(event.target.result), { to: 'string' });
+                    fileContents[key] = decompressed;
+                    dropZones[key].classList.add('loaded');
+                    feedback.innerHTML = `<strong>Fichier chargé :</strong> ${file.name}`;
+                    if (fileContents.A && fileContents.B) {
+                        compareBtn.disabled = false;
+                    }
+                } catch (err) {
+                    feedback.textContent = "Erreur: Fichier invalide ou corrompu.";
+                    alert(`Erreur de décompression pour le fichier ${key}: ${err.message}`);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+        
+        compareBtn.addEventListener('click', () => {
+            compareBtn.textContent = 'Analyse en cours...';
+            compareBtn.disabled = true;
+
+            const worker = new Worker(URL.createObjectURL(new Blob([document.getElementById('comparator-worker').textContent])));
+            
+            worker.onmessage = event => {
+                const { status, results, error } = event.data;
+                if (status === 'done') {
+                    displayResults(results);
+                    compareBtn.textContent = 'Comparer les Corpus';
+                    compareBtn.disabled = false;
+                } else if (status === 'error') {
+                     alert(`Une erreur est survenue durant la comparaison: ${error}`);
+                     compareBtn.textContent = 'Comparer les Corpus';
+                     compareBtn.disabled = false;
+                } else {
+                    compareBtn.textContent = `Analyse en cours (${status})...`;
+                }
+            };
+
+            worker.postMessage({ contentA: fileContents.A, contentB: fileContents.B });
+        });
+
+        function displayResults(results) {
+            resultsSection.innerHTML = '';
+            resultsSection.classList.remove('hidden');
+
+            const summaryTemplate = document.getElementById('result-summary-template').content.cloneNode(true);
+            summaryTemplate.getElementById('summary-total-A').textContent = results.totalA;
+            summaryTemplate.getElementById('summary-total-B').textContent = results.totalB;
+            summaryTemplate.getElementById('summary-added').textContent = results.added.length;
+            summaryTemplate.getElementById('summary-removed').textContent = results.removed.length;
+            summaryTemplate.getElementById('summary-modified').textContent = results.modified.length;
+            resultsSection.appendChild(summaryTemplate);
+
+            const { added, removed, modified } = results;
+
+            if (added.length) resultsSection.appendChild(createDetailsSection('Poèmes Ajoutés', added, 'green', createSimplePoemItem));
+            if (removed.length) resultsSection.appendChild(createDetailsSection('Poèmes Supprimés', removed, 'red', createSimplePoemItem));
+            if (modified.length) resultsSection.appendChild(createDetailsSection('Poèmes Modifiés', modified, 'yellow', createModifiedPoemItem));
+        }
+        
+        function createDetailsSection(title, items, color, itemRenderer) {
+            const template = document.getElementById('result-details-template').content.cloneNode(true);
+            const details = template.querySelector('details');
+            details.querySelector('h3').textContent = `${title} (${items.length})`;
+            
+            const icon = details.querySelector('.badge-icon');
+            icon.classList.add(`bg-${color}-100`, `dark:bg-${color}-900/50`);
+            const svgPaths = {
+                green: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />',
+                red: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6" />',
+                yellow: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z" />'
+            };
+            icon.innerHTML = `<svg class="w-5 h-5 text-${color}-600 dark:text-${color}-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">${svgPaths[color]}</svg>`;
+
+            const contentList = details.querySelector('.content-list');
+            items.sort((a,b) => (a.title || a.poem.title).localeCompare(b.title || b.poem.title))
+                 .forEach(item => contentList.appendChild(itemRenderer(item)));
+
+            details.addEventListener('toggle', (event) => {
+                const arrow = event.target.querySelector('.details-arrow');
+                arrow.classList.toggle('rotate-180', event.target.open);
+            });
+            
+            return details;
+        }
+
+        function createSimplePoemItem(poem) {
+            const div = document.createElement('div');
+            div.className = 'flex justify-between items-center p-3 border-b border-slate-200 dark:border-slate-700 last:border-b-0';
+            div.innerHTML = `
+                <div>
+                    <p class="font-semibold text-slate-900 dark:text-white">${poem.title}</p>
+                    <p class="text-sm text-slate-500 dark:text-slate-400">${poem.metadata.author || 'Auteur inconnu'}</p>
+                </div>
+                <a href="${poem.wikisource_url}" target="_blank" class="text-indigo-600 hover:underline text-sm">Voir sur Wikisource</a>
+            `;
+            return div;
+        }
+
+        function createModifiedPoemItem({ poem, changes }) {
+            const div = document.createElement('div');
+            div.className = 'p-3 border-b border-slate-200 dark:border-slate-700 last:border-b-0';
+            
+            const changesHtml = changes.map(change => {
+                const from = change.from === null ? '<i>Vide</i>' : `"${change.from}"`;
+                const to = change.to === null ? '<i>Vide</i>' : `"${change.to}"`;
+                return `<li class="text-xs"><span class="font-semibold">${change.field}:</span> ${from} &rarr; ${to}</li>`;
+            }).join('');
+            
+            div.innerHTML = `
+                 <div class="flex justify-between items-center">
+                    <div>
+                        <p class="font-semibold text-slate-900 dark:text-white">${poem.title}</p>
+                        <p class="text-sm text-slate-500 dark:text-slate-400">${poem.metadata.author || 'Auteur inconnu'}</p>
+                    </div>
+                    <a href="${poem.wikisource_url}" target="_blank" class="text-indigo-600 hover:underline text-sm">Voir sur Wikisource</a>
+                </div>
+                <ul class="list-disc list-inside mt-2 pl-2 space-y-1 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded-md">
+                    ${changesHtml}
+                </ul>
+            `;
+            return div;
+        }
+    });
+    </script>
+</body>
+</html>

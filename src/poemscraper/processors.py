@@ -111,13 +111,26 @@ class PoemProcessor:
         }
 
         for prop, key in itemprop_map.items():
-            element: Tag | None = soup.find(attrs={"itemprop": prop})
-            if element:
-                value = element.get_text(strip=True) or element.get(
-                    "content", ""
-                ).strip()
-                if value:
-                    metadata[key] = value
+            element: Optional[Tag] = soup.find(attrs={"itemprop": prop})
+            if not element:
+                continue
+
+            value = ""
+            if prop == "isPartOf":
+                link_tag = element.find("a")
+                if link_tag:
+                    name_span = link_tag.find("span", itemprop="name")
+                    if name_span:
+                        value = name_span.get_text(strip=True)
+                    else:
+                        value = link_tag.get_text(strip=True)
+        
+            if not value:
+                value = element.get_text(strip=True) or element.get("content", "").strip()
+
+            if value:
+                metadata[key] = value
+                
         return metadata
 
     def _extract_wikitext_metadata(

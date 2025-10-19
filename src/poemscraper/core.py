@@ -1,5 +1,4 @@
 import asyncio
-import functools
 import gzip
 import json
 import logging
@@ -9,18 +8,16 @@ from typing import Set, Optional, Dict, Any, List
 from datetime import datetime, timezone
 import logging.handlers
 
-import re
 import mwparserfromhell
 from bs4 import BeautifulSoup
 from tqdm import tqdm
-from urllib.parse import unquote
 
 from .api_client import WikiAPIClient, get_localized_category_prefix
 from .classifier import PageClassifier, PageType
 from .database import DatabaseManager, connect_sync_db
 from .exceptions import PageProcessingError, PoemParsingError
 from .processors import PoemProcessor
-from .schemas import PoemSchema, Collection, Section, PoemInfo, CollectionComponent
+from .schemas import PoemSchema, Collection, Section, PoemInfo
 from .cleaner import process_poem
 from .tree_logger import HierarchicalLogger
 from .log_manager import LogManager
@@ -314,6 +311,30 @@ class ScraperOrchestrator:
                         self.ids_with_collection_context.add(poem_data.page_id)
                         if is_redirect:
                             self.ids_with_collection_context.add(page_id)
+                            
+                    elif poem_data.collection_title:
+                        logger.debug(f"Poem '{page_title}' has collection title '{poem_data.collection_title}' but no ID. Attempting upward inference.")
+                        collection_log.info(f"INFERENCE: Poem '{page_title}' (id:{final_page_id}) has title '{poem_data.collection_title}' but no context. Searching for collection page.")
+                        
+                        found_collection_title = await client.search_for_page(poem_data.collection_title, namespace=0)
+                        
+                        if found_collection_title:
+                            collection_log.info(f"Inference SUCCESS: Found page '{found_collection_title}' for title '{poem_data.collection_title}'.")
+                            collection_page_data_query = await client.get_page_info_and_redirects([found_collection_title])
+                            
+                            if collection_page_data_query and collection_page_data_query.get("pages"):
+                                collection_page_info = next((p for p in collection_page_data_query["pages"] if "missing" not in p), None)
+                                if collection_page_info:
+                                    collection_log.info(f"Enqueuing inferred collection '{found_collection_title}' for processing.")
+                                    collection_item = {
+                                        'page_info': collection_page_info,
+                                        'parent_title': author_cat,
+                                        'author_cat': author_cat
+                                    }
+                                    await self._schedule_page_if_new(page_queue, collection_item)
+                        else:
+                            collection_log.warning(f"Inference FAILED: Could not find a page for collection title '{poem_data.collection_title}'.")
+
 
 
                     await self._writer_put(writer_queue, poem_data)

@@ -4,10 +4,10 @@ import gzip
 import io
 import json
 import sys
+import statistics
 from pathlib import Path
 from collections import Counter, defaultdict
 from typing import Iterator, Dict, Any
-import statistics
 
 def is_gz(path: Path) -> bool:
     """Vérifie si un fichier est compressé avec Gzip."""
@@ -38,7 +38,8 @@ def iter_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
 class CorpusAnalyzer:
     """
     Orchestre une analyse complète et détaillée du corpus de poèmes,
-    en extrayant des statistiques sur la structure, le contenu et les métadonnées.
+    en extrayant des statistiques sur la structure, le contenu et les métadonnées,
+    et en distinguant rigoureusement les données structurées des données inférées.
     """
 
     def __init__(self, filepath: Path):
@@ -47,21 +48,27 @@ class CorpusAnalyzer:
 
         # Compteurs de complétude des métadonnées
         self.poems_with_author = 0
-        self.poems_with_collection = 0
         self.poems_with_date = 0
         self.poems_with_publisher = 0
         self.poems_with_translator = 0
+        
+        # Compteurs structurels
+        self.poems_with_identified_collection = 0
+        self.poems_with_unidentified_collection = 0
         self.poems_with_section = 0
-        self.poems_with_order = 0 # Nouvelle statistique
+        self.poems_with_order = 0
 
         # Données pour l'analyse de contenu
         self.total_stanzas = 0
         self.total_verses = 0
-        self.poem_lengths_data: list[dict] = [] # Pour les classements de longueur
+        self.poem_lengths_data: list[dict] = []
 
-        # Structures pour l'analyse des entités (Auteurs, Recueils, Hubs)
-        self.authors_data = defaultdict(lambda: {"poem_count": 0, "collection_titles": set()})
-        self.collections_data = defaultdict(lambda: {"poem_count": 0, "sections": set()})
+        # Structures pour l'analyse des entités
+        self.authors_data = defaultdict(lambda: {"poem_count": 0, "collection_ids": set()})
+        self.collections_by_id: Dict[int, Dict[str, Any]] = defaultdict(
+            lambda: {"poem_count": 0, "titles": set(), "sections": set(), "authors": set()}
+        )
+        self.collections_by_title_only: Counter[str] = Counter()
         self.hubs_data = defaultdict(lambda: {"version_count": 0, "title": ""})
         self.checksum_counts: Counter[str] = Counter()
 
@@ -91,21 +98,30 @@ class CorpusAnalyzer:
         if metadata.get("translator"): self.poems_with_translator += 1
 
         # --- Analyse Structurelle (Recueils et Sections) ---
+        collection_page_id = poem.get("collection_page_id")
         collection_title = poem.get("collection_title")
-        if collection_title:
-            self.poems_with_collection += 1
-            self.collections_data[collection_title]["poem_count"] += 1
+
+        if collection_page_id:
+            self.poems_with_identified_collection += 1
+            collection_entry = self.collections_by_id[collection_page_id]
+            collection_entry["poem_count"] += 1
+            if collection_title:
+                collection_entry["titles"].add(collection_title)
             if author:
-                self.authors_data[author]["collection_titles"].add(collection_title)
+                collection_entry["authors"].add(author)
+                self.authors_data[author]["collection_ids"].add(collection_page_id)
+            
+            section_title = poem.get("section_title")
+            if section_title:
+                self.poems_with_section += 1
+                collection_entry["sections"].add(section_title)
+        
+        elif collection_title:
+            self.poems_with_unidentified_collection += 1
+            self.collections_by_title_only[collection_title] += 1
 
         if poem.get("poem_order") is not None:
             self.poems_with_order += 1
-
-        section_title = poem.get("section_title")
-        if section_title:
-            self.poems_with_section += 1
-            if collection_title:
-                self.collections_data[collection_title]["sections"].add(section_title)
 
         # --- Analyse des Hubs (Multi-versions) ---
         hub_id = poem.get("hub_page_id")
@@ -156,8 +172,8 @@ class CorpusAnalyzer:
         print_header("Vue d'Ensemble du Corpus")
         print_stat("Nombre total de poèmes uniques", self.total_poems)
         print_stat("Nombre total d'auteurs uniques", len(self.authors_data))
-        print_stat("Nombre total de recueils uniques", len(self.collections_data))
-        print_stat("Nombre total de hubs (groupes de versions)", len(self.hubs_data))
+        print_stat("Nombre total de recueils IDENTIFIÉS uniques", len(self.collections_by_id))
+        print_stat("Nombre de titres de recueils NON-IDENTIFIÉS", len(self.collections_by_title_only))
 
         # --- Section 2: Qualité des Métadonnées ---
         print_header("Qualité et Complétude des Métadonnées")
@@ -168,23 +184,24 @@ class CorpusAnalyzer:
 
         # --- Section 3: Analyse Structurelle des Recueils ---
         print_header("Analyse Structurelle des Recueils")
-        print_stat("Poèmes appartenant à un recueil", self.poems_with_collection, self.total_poems)
-        print_stat("Poèmes avec une position ordonnée", self.poems_with_order, self.poems_with_collection)
-        print_stat("Poèmes avec un titre de section", self.poems_with_section, self.total_poems)
+        print_stat("Poèmes liés à un recueil IDENTIFIÉ (par ID)", self.poems_with_identified_collection, self.total_poems)
+        print_stat("Poèmes liés à un recueil NON-IDENTIFIÉ (titre)", self.poems_with_unidentified_collection, self.total_poems)
+        total_in_collection = self.poems_with_identified_collection + self.poems_with_unidentified_collection
+        print_stat("Total des poèmes dans un recueil (tous types)", total_in_collection, self.total_poems)
+        print_stat("Poèmes avec une position ordonnée", self.poems_with_order, total_in_collection)
+        print_stat("Poèmes avec un titre de section", self.poems_with_section, self.poems_with_identified_collection)
         
-        collections_with_sections = sum(1 for data in self.collections_data.values() if data["sections"])
-        if self.collections_data:
-            print_stat("Recueils structurés en sections", collections_with_sections, len(self.collections_data))
+        collections_with_sections = sum(1 for data in self.collections_by_id.values() if data["sections"])
+        if self.collections_by_id:
+            print_stat("Recueils IDENTIFIÉS structurés en sections", collections_with_sections, len(self.collections_by_id))
         
         # --- Section 4: Analyse Quantitative du Contenu ---
         print_header("Analyse Quantitative du Contenu Poétique")
         print_stat("Nombre total de strophes", self.total_stanzas)
         print_stat("Nombre total de vers", self.total_verses)
         if self.total_poems > 0:
-            avg_stanzas = self.total_stanzas / self.total_poems
-            avg_verses = self.total_verses / self.total_poems
-            print_stat("Nb. moyen de strophes par poème", f"{avg_stanzas:.2f}")
-            print_stat("Nb. moyen de vers par poème", f"{avg_verses:.2f}")
+            print_stat("Nb. moyen de strophes par poème", f"{self.total_stanzas / self.total_poems:.2f}")
+            print_stat("Nb. moyen de vers par poème", f"{self.total_verses / self.total_poems:.2f}")
         
         poem_lengths_verses = [p['verses'] for p in self.poem_lengths_data]
         if poem_lengths_verses:
@@ -196,7 +213,6 @@ class CorpusAnalyzer:
         print_header("Analyse des Versions et Doublons")
         real_hubs = {k: v for k, v in self.hubs_data.items() if v["version_count"] > 1}
         print_stat("Hubs multi-versions réels (>1 poème)", len(real_hubs))
-        print_stat("Poèmes autonomes (agissant comme leur propre hub)", len(self.hubs_data) - len(real_hubs))
         exact_duplicates = sum(count - 1 for count in self.checksum_counts.values() if count > 1)
         print_stat("Contenus wikitext strictement identiques (doublons)", exact_duplicates)
         
@@ -210,15 +226,21 @@ class CorpusAnalyzer:
             print(f"    - {author:<40} {data['poem_count']} poèmes")
 
         # Recueils par taille
-        print("\n  Recueils les plus vastes (par nb. de poèmes) :")
-        top_collections_by_size = sorted(self.collections_data.items(), key=lambda item: item[1]['poem_count'], reverse=True)[:10]
-        for title, data in top_collections_by_size:
+        print("\n  Recueils IDENTIFIÉS les plus vastes (par nb. de poèmes) :")
+        top_collections = sorted(self.collections_by_id.items(), key=lambda item: item[1]['poem_count'], reverse=True)[:10]
+        for cid, data in top_collections:
+            title = next(iter(data['titles']), f"ID: {cid}")
             print(f"    - {title:<40} {data['poem_count']} poèmes")
+        
+        print("\n  Titres de recueils NON-IDENTIFIÉS les plus fréquents :")
+        for title, count in self.collections_by_title_only.most_common(10):
+            print(f"    - {title:<40} {count} poèmes")
 
         # Recueils par structure
         print("\n  Recueils les mieux structurés (par nb. de sections) :")
-        top_collections_by_section = sorted(self.collections_data.items(), key=lambda item: len(item[1]['sections']), reverse=True)[:10]
-        for title, data in top_collections_by_section:
+        top_structured = sorted(self.collections_by_id.items(), key=lambda item: len(item[1]['sections']), reverse=True)[:10]
+        for cid, data in top_structured:
+            title = next(iter(data['titles']), f"ID: {cid}")
             print(f"    - {title:<40} {len(data['sections'])} sections")
 
         # Hubs
@@ -230,19 +252,20 @@ class CorpusAnalyzer:
                 print(f"    - {hub_title_display:<40} {data['version_count']} versions")
         else:
             print("    Aucun hub multi-versions trouvé.")
-
+            
+        # Poèmes par longueur
         print("\n  Poèmes les plus longs (par nb. de vers) :")
         top_longest = sorted(self.poem_lengths_data, key=lambda p: p['verses'], reverse=True)[:10]
         for poem in top_longest:
-            display_title = f"\"{poem['title']}\" ({poem['author']})"
-            print(f"    - {display_title:<60} {poem['verses']} vers")
-            
+            display = f"\"{poem['title']}\" ({poem['author']})"
+            print(f"    - {display:<60} {poem['verses']} vers")
+        
         print("\n  Poèmes les plus courts (par nb. de vers) :")
         top_shortest = sorted(self.poem_lengths_data, key=lambda p: p['verses'])[:10]
         for poem in top_shortest:
             display_title = f"\"{poem['title']}\" ({poem['author']})"
             print(f"    - {display_title:<60} {poem['verses']} vers")
-            
+        
         print("\n" + "="*80)
 
 
@@ -263,7 +286,7 @@ def main():
     
     if target is None:
         print("[ERREUR] Aucun fichier de données trouvé. Veuillez spécifier le chemin ou placer", file=sys.stderr)
-        print("         `poems.cleaned.jsonl.gz` dans le répertoire `data/`.", file=sys.stderr)
+        print("         `poems.cleaned.jsonl.gz` ou `poems.jsonl.gz` dans le répertoire `data/`.", file=sys.stderr)
         sys.exit(1)
 
     analyzer = CorpusAnalyzer(target)

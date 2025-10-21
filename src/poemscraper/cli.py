@@ -9,6 +9,7 @@ from .log_manager import LogManager
 from .cleaner import main as cleaner_main
 from .results_analyzer import main as analyzer_main
 from .enricher import PoemEnricher
+from .debugger import main as debugger_main
 
 # --- Fonctions de lancement pour chaque sous-commande ---
 
@@ -58,6 +59,17 @@ def run_analyzer(args: argparse.Namespace):
         logging.critical(f"Une erreur critique est survenue durant l'analyse : {e}", exc_info=True)
         sys.exit(1)
 
+def run_debugger(args: argparse.Namespace):
+    """Lance le script de débogage pour extraire les recueils non identifiés."""
+    try:
+        debugger_argv = ["--input", str(args.input), "--output", str(args.output)]
+        return_code = debugger_main(debugger_argv)
+        if return_code != 0:
+            sys.exit(return_code)
+    except Exception as e:
+        logging.critical(f"Une erreur critique est survenue durant le débogage : {e}", exc_info=True)
+        sys.exit(1)
+
 def main_cli():
     """Point d'entrée principal de l'interface en ligne de commande."""
     parser = argparse.ArgumentParser(
@@ -98,6 +110,12 @@ def main_cli():
     p_analyze = subparsers.add_parser("analyze", help="Analyser un fichier de données et afficher des statistiques.")
     p_analyze.add_argument("filepath", type=Path, nargs='?', default=None, help="Chemin du fichier à analyser (optionnel, cherche dans data/ par défaut).")
     p_analyze.set_defaults(func=run_analyzer)
+
+    # --- Commande 'debug' ---
+    p_debug = subparsers.add_parser("debug", help="Extraire les poèmes de recueils non identifiés pour analyse.")
+    p_debug.add_argument("--input", "-i", type=Path, required=True, help="Fichier d'entrée à analyser (ex: data/poems.enriched.jsonl.gz).")
+    p_debug.add_argument("--output", "-o", type=Path, required=True, help="Fichier de sortie pour les poèmes extraits (ex: data/debug.unidentified.jsonl.gz).")
+    p_debug.set_defaults(func=run_debugger)
 
     args = parser.parse_args()
 

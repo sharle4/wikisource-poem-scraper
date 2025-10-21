@@ -5,6 +5,7 @@ import io
 import json
 import sys
 import statistics
+import argparse
 from pathlib import Path
 from collections import Counter, defaultdict
 from typing import Iterator, Dict, Any
@@ -269,10 +270,14 @@ class CorpusAnalyzer:
         print("\n" + "="*80)
 
 
-def main():
+def main(argv: list[str] | None = None):
     """Point d'entrée : cherche un fichier `cleaned` et lance l'analyse."""
-    if len(sys.argv) > 1:
-        target = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description="Analyse un fichier de données de poèmes.")
+    parser.add_argument("filepath", type=Path, nargs='?', default=None, help="Chemin du fichier à analyser.")
+    args = parser.parse_args(argv)
+
+    if args.filepath:
+        target = args.filepath
         if not target.exists():
              print(f"[ERREUR] Le fichier spécifié '{target}' est introuvable.", file=sys.stderr)
              sys.exit(1)

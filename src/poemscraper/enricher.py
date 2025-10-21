@@ -93,7 +93,7 @@ class PoemEnricher:
         """
         Interroge l'API MediaWiki par lots pour trouver les IDs des titres de recueils.
         """
-        batch_size = 50
+        batch_size = 1
         tasks = []
         for i in range(0, len(titles), batch_size):
             batch = titles[i:i + batch_size]

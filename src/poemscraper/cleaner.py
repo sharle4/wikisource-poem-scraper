@@ -8,44 +8,19 @@ Ce script traite un fichier de résultats `poems.jsonl.gz` pour :
 3. Supprimer les champs de métadonnées inutilisés.
 
 Utilisation:
-  python -m src.poemscraper.cleaner --input <fichier_entree.jsonl.gz> --output <fichier_sortie.jsonl.gz>
+  python -m poemscraper clean --input <fichier_entree.jsonl.gz> --output <fichier_sortie.jsonl.gz>
 """
 from __future__ import annotations
 
 import argparse
-import gzip
-import io
 import json
 import re
 import sys
 from pathlib import Path
-from typing import Iterator, Dict, Any
+from typing import Dict, Any
 
-def is_gz(path: Path) -> bool:
-    """Vérifie si un fichier est compressé avec Gzip."""
-    return path.suffix == ".gz" or path.name.endswith(".jsonl.gz")
+from .utils import iter_jsonl, open_maybe_gzip
 
-def open_maybe_gzip(path: Path, mode: str):
-    """Ouvre un fichier, en gérant la décompression Gzip de manière transparente."""
-    if "b" in mode:
-        return gzip.open(path, mode) if is_gz(path) else open(path, mode)
-    if is_gz(path):
-        gz = gzip.open(path, mode.replace("t", "b"))
-        return io.TextIOWrapper(gz, encoding="utf-8")
-    return open(path, mode, encoding="utf-8")
-
-def iter_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
-    """Itère sur les lignes d'un fichier JSONL."""
-    with open_maybe_gzip(path, "rt") as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                print(f"[AVERTISSEMENT] Ligne {line_num} ignorée: impossible de décoder le JSON.", file=sys.stderr)
-                continue
 
 def clean_title(title: str) -> str:
     """Retourne le dernier segment après '/' et enlève tout contenu entre parenthèses."""
@@ -67,6 +42,7 @@ def process_poem(poem: Dict[str, Any]) -> Dict[str, Any]:
     return poem
 
 def main(argv: list[str] | None = None) -> int:
+    """Point d'entrée principal pour la logique de nettoyage."""
     parser = argparse.ArgumentParser(
         description="Nettoie et déduplique un fichier de résultats poems.jsonl.gz.",
         formatter_class=argparse.RawTextHelpFormatter
@@ -96,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         page_id = poem.get("page_id")
         
         if page_id is None:
-            print(f"[AVERTISSEMENT] Poème sans page_id trouvé à la ligne {total_read}, ignoré.", file=sys.stderr)
+            print(f"[AVERTISSEMENT] Poème sans page_id trouvé (ligne ~{total_read}), ignoré.", file=sys.stderr)
             continue
 
         cleaned_poem = process_poem(poem)
@@ -129,4 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        print(f"Erreur inattendue: {e}", file=sys.stderr)
+        sys.exit(1)

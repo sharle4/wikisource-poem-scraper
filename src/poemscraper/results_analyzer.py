@@ -278,15 +278,11 @@ def main():
              sys.exit(1)
     else:
         repo_root = Path(__file__).resolve().parents[2]
-        candidates = [
-            repo_root / "data" / "poems.cleaned.jsonl.gz",
-            repo_root / "data" / "poems.jsonl.gz",
-        ]
-        target = next((p for p in candidates if p.exists()), None)
+        candidates = sorted(repo_root.glob("data/*.jsonl.gz"), key=lambda p: p.stat().st_mtime, reverse=True)
+        target = next((p for p in candidates), None)
     
     if target is None:
-        print("[ERREUR] Aucun fichier de données trouvé. Veuillez spécifier le chemin ou placer", file=sys.stderr)
-        print("         `poems.cleaned.jsonl.gz` ou `poems.jsonl.gz` dans le répertoire `data/`.", file=sys.stderr)
+        print("[ERREUR] Aucun fichier de données trouvé. Spécifiez un chemin ou placez un fichier .jsonl.gz dans data/", file=sys.stderr)
         sys.exit(1)
 
     analyzer = CorpusAnalyzer(target)

@@ -30,13 +30,15 @@ logger = logging.getLogger(__name__)
 class PoemEnricher:
     """Orchestre le processus d'enrichissement des données de poèmes."""
 
-    def __init__(self, input_path: Path, output_path: Path, lang: str, workers: int):
+    def __init__(self, input_path: Path, output_path: Path, lang: str, workers: int, bot_username: str | None = None, bot_password: str | None = None):
         self.input_path = input_path
         self.output_path = output_path
         self.lang = lang
         self.workers = workers
         self.api_endpoint = f"https://{lang}.wikisource.org/w/api.php"
         self.title_to_id_cache: Dict[str, int] = {}
+        self.bot_username = bot_username
+        self.bot_password = bot_password
 
     async def run(self):
         """Exécute le workflow complet d'enrichissement."""
@@ -52,7 +54,7 @@ class PoemEnricher:
         # --- Étape 2: Récupérer les IDs manquants via l'API ---
         if titles_to_fetch:
             logger.info(f"Récupération de {len(titles_to_fetch)} IDs de recueils manquants via l'API...")
-            async with WikiAPIClient(self.api_endpoint, self.workers) as client:
+            async with WikiAPIClient(self.api_endpoint, self.workers, self.bot_username, self.bot_password) as client:
                 await self._fetch_missing_ids_from_api(client, list(titles_to_fetch))
         else:
             logger.info("Aucun ID de recueil manquant à récupérer. Le cache est complet.")

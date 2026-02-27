@@ -8,7 +8,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/4.4.5 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/4.5.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -26,15 +26,62 @@ class WikiAPIClient:
     """
     Client API MediaWiki asynchrone, respectueux des règles.
     """
-    def __init__(self, api_endpoint: str, max_concurrent_requests: int = 5):
+    def __init__(self, api_endpoint: str, max_concurrent_requests: int = 5, bot_username: Optional[str] = None, bot_password: Optional[str] = None):
         self.api_endpoint = api_endpoint
         self.headers = {"User-Agent": WIKIMEDIA_USER_AGENT}
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
         self.session: Optional[aiohttp.ClientSession] = None
+        self.bot_username = bot_username
+        self.bot_password = bot_password
 
     async def __aenter__(self):
-        self.session = aiohttp.ClientSession(headers=self.headers)
+        cookie_jar = aiohttp.CookieJar(unsafe=True)
+        self.session = aiohttp.ClientSession(headers=self.headers, cookie_jar=cookie_jar)
+        
+        if self.bot_username and self.bot_password:
+            await self._login()
+            
         return self
+
+    async def _login(self):
+        """Authenticates with the MediaWiki API using a bot password."""
+        logger.info(f"Attempting bot login for user: {self.bot_username}")
+        
+        # 1. Obtenir un token de connexion
+        token_params = {
+            "action": "query",
+            "meta": "tokens",
+            "type": "login",
+            "format": "json"
+        }
+        
+        async with self.session.get(self.api_endpoint, params=token_params) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+            login_token = data.get("query", {}).get("tokens", {}).get("logintoken")
+            
+        if not login_token:
+            logger.error("Failed to retrieve login token.")
+            return
+
+        # 2. Se connecter avec le token
+        login_params = {
+            "action": "login",
+            "lgname": self.bot_username,
+            "lgpassword": self.bot_password,
+            "lgtoken": login_token,
+            "format": "json"
+        }
+        
+        async with self.session.post(self.api_endpoint, data=login_params) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+            
+            login_result = data.get("login", {}).get("result")
+            if login_result == "Success":
+                logger.info("Bot login successful.")
+            else:
+                logger.error(f"Bot login failed. Result: {data.get('login', {})}")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:

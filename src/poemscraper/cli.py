@@ -2,7 +2,11 @@ import argparse
 import asyncio
 import logging
 import sys
+import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from .core import ScraperOrchestrator
 from .log_manager import LogManager
@@ -17,7 +21,12 @@ def run_scraper(args: argparse.Namespace):
     """Lance le processus de scraping principal."""
     try:
         log_manager = LogManager(args.output_dir / "logs")
-        orchestrator = ScraperOrchestrator(config=args, log_manager=log_manager)
+        orchestrator = ScraperOrchestrator(
+            config=args, 
+            log_manager=log_manager,
+            bot_username=args.bot_user,
+            bot_password=args.bot_pass
+        )
         asyncio.run(orchestrator.run())
     except KeyboardInterrupt:
         logging.info("Processus de scraping interrompu. Arrêt en cours.")
@@ -32,7 +41,9 @@ def run_enricher(args: argparse.Namespace):
             input_path=args.input,
             output_path=args.output,
             lang=args.lang,
-            workers=args.workers
+            workers=args.workers,
+            bot_username=args.bot_user,
+            bot_password=args.bot_pass
         )
         asyncio.run(enricher.run())
     except Exception as e:
@@ -116,6 +127,10 @@ def main_cli():
     p_debug.add_argument("--input", "-i", type=Path, required=True, help="Fichier d'entrée à analyser (ex: data/poems.enriched.jsonl.gz).")
     p_debug.add_argument("--output", "-o", type=Path, required=True, help="Fichier de sortie pour les poèmes extraits (ex: data/debug.unidentified.jsonl.gz).")
     p_debug.set_defaults(func=run_debugger)
+
+    # Variables globales optionnelles pour l'authentification (bot)
+    parser.add_argument("--bot-user", type=str, default=os.getenv("WIKISOURCE_BOT_USERNAME"), help="Nom d'utilisateur du bot (ou variable d'environnement WIKISOURCE_BOT_USERNAME)")
+    parser.add_argument("--bot-pass", type=str, default=os.getenv("WIKISOURCE_BOT_PASSWORD"), help="Mot de passe du bot (ou variable d'environnement WIKISOURCE_BOT_PASSWORD)")
 
     args = parser.parse_args()
 

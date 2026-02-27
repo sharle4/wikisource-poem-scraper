@@ -30,9 +30,11 @@ logger = logging.getLogger(__name__)
 class ScraperOrchestrator:
     """Orchestre le workflow de scraping intelligent et hiérarchique."""
 
-    def __init__(self, config, log_manager: LogManager):
+    def __init__(self, config, log_manager: LogManager, bot_username: Optional[str] = None, bot_password: Optional[str] = None):
         self.config = config
         self.log_manager = log_manager
+        self.bot_username = bot_username
+        self.bot_password = bot_password
         self.api_endpoint = f"https://{config.lang}.wikisource.org/w/api.php"
         self.write_cleaned = str(getattr(config, "cleaned", "true")).lower() == "true"
 
@@ -102,7 +104,7 @@ class ScraperOrchestrator:
         writer_thread.start()
 
         try:
-            async with WikiAPIClient(self.api_endpoint, self.config.workers) as client:
+            async with WikiAPIClient(self.api_endpoint, self.config.workers, self.bot_username, self.bot_password) as client:
                 producer_task = asyncio.create_task(self._producer(client, page_queue))
 
                 with tqdm(desc="Processing pages", unit=" page", dynamic_ncols=True) as pbar:

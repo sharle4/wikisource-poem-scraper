@@ -38,11 +38,22 @@ Ce projet utilise `asyncio` et `aiohttp` pour une récupération concurrente con
 
 ## **Utilisation**
 
+### **Authentification (Recommandé)**
+Pour utiliser le scraping intensif, il est fortement recommandé de configurer un compte Bot MediaWiki.
+1. Créez un mot de passe de bot dans vos préférences utilisateur sur Wikisource.
+2. Créez un fichier `.env` à la racine du projet avec ces informations :
+    ```env
+    WIKISOURCE_BOT_USERNAME=Votrenom@NomDuBot
+    WIKISOURCE_BOT_PASSWORD=votre_mot_de_passe_de_bot
+    ```
+Le scraper détectera automatiquement ces variables et effectuera une connexion authentifiée pour l'API MediaWiki.
+
+### **CLI Base**
 Le scraper s'utilise via une interface en ligne de commande.
 
 ```bash
 \# Exemple pour scraper tous les poèmes
-python \-m poemscraper \--lang fr \--category "Poèmes par Auteur"
+python \-m poemscraper scrape \--lang fr \--category "Poèmes par Auteur"
 ```
 
 ### **Arguments Principaux**

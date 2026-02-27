@@ -1,5 +1,6 @@
 import pytest
-from src.poemscraper.parsing import WikitextParser
+from bs4 import BeautifulSoup
+from src.poemscraper.parsing import PoemParser
 
 SAMPLE_WIKITEXT_SIMPLE = """
 Du texte avant.
@@ -37,10 +38,11 @@ SAMPLE_WIKITEXT_EMPTY = """
 SAMPLE_WIKITEXT_NO_POEM = "Juste du texte normal. [[Lien]]."
 
 
-class TestWikitextParser:
+class TestPoemParser:
 
     def test_simple_poem_structure(self):
-        structure = WikitextParser.extract_poem_structure(SAMPLE_WIKITEXT_SIMPLE)
+        soup = BeautifulSoup(SAMPLE_WIKITEXT_SIMPLE, "html.parser")
+        structure = PoemParser.extract_poem_structure(soup)
         assert structure is not None
         assert len(structure.stanzas) == 2
         assert structure.stanzas[0] == ["Vers 1 de la strophe 1", "Vers 2 de la strophe 1"]
@@ -48,14 +50,16 @@ class TestWikitextParser:
         assert structure.raw_markers == ["<poem>"]
 
     def test_indentation_stripping(self):
-        structure = WikitextParser.extract_poem_structure(SAMPLE_WIKITEXT_INDENTED)
+        soup = BeautifulSoup(SAMPLE_WIKITEXT_INDENTED, "html.parser")
+        structure = PoemParser.extract_poem_structure(soup)
         assert structure is not None
         assert len(structure.stanzas) == 2
-        assert structure.stanzas[0] == ["Strophe 1, Vers 1", "Vers 2 indenté", "Vers 3 doublement indenté"]
+        assert structure.stanzas[0] == ["Strophe 1, Vers 1", ":Vers 2 indenté", "::Vers 3 doublement indenté"]
         assert structure.raw_markers[0] == '<poem class="fancy">'
 
     def test_multiple_poem_blocks_merged(self):
-        structure = WikitextParser.extract_poem_structure(SAMPLE_WIKITEXT_MULTI_BLOCK)
+        soup = BeautifulSoup(SAMPLE_WIKITEXT_MULTI_BLOCK, "html.parser")
+        structure = PoemParser.extract_poem_structure(soup)
         assert structure is not None
         assert len(structure.stanzas) == 2
         assert structure.stanzas[0] == ["Bloc 1, Vers 1"]
@@ -63,16 +67,19 @@ class TestWikitextParser:
         assert structure.raw_markers == ["<poem>", "<poem>"]
 
     def test_no_poem_tag(self):
-        structure = WikitextParser.extract_poem_structure(SAMPLE_WIKITEXT_NO_POEM)
+        soup = BeautifulSoup(SAMPLE_WIKITEXT_NO_POEM, "html.parser")
+        structure = PoemParser.extract_poem_structure(soup)
         assert structure is None
 
     def test_empty_poem_tag(self):
-        structure = WikitextParser.extract_poem_structure(SAMPLE_WIKITEXT_EMPTY)
+        soup = BeautifulSoup(SAMPLE_WIKITEXT_EMPTY, "html.parser")
+        structure = PoemParser.extract_poem_structure(soup)
         assert structure is None
 
     def test_normalized_text_creation(self):
-        structure = WikitextParser.extract_poem_structure(SAMPLE_WIKITEXT_SIMPLE)
+        soup = BeautifulSoup(SAMPLE_WIKITEXT_SIMPLE, "html.parser")
+        structure = PoemParser.extract_poem_structure(soup)
         assert structure is not None
-        normalized = WikitextParser.create_normalized_text(structure)
+        normalized = PoemParser.create_normalized_text(structure)
         expected_text = "Vers 1 de la strophe 1\nVers 2 de la strophe 1\n\nVers 1 de la strophe 2"
         assert normalized == expected_text

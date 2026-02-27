@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikisource_poem_scraper"
-version = "4.4.5"
+version = "4.5.0"
 description = "Scraper intelligent et asynchrone pour extraire les poèmes de Wikisource en gérant les recueils et les pages de contenu."
 readme = "README.md"
 authors = [
   { name = "Sharle", email = "charleskayssieh@gmail.com" },
 ]
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.10, <3.13"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -31,6 +31,7 @@ dependencies = [
     "mwparserfromhell>=0.6.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0", # Parseur HTML rapide pour BeautifulSoup
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

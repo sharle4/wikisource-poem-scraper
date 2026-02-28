@@ -70,7 +70,9 @@ class CorpusAnalyzer:
             lambda: {"poem_count": 0, "titles": set(), "sections": set(), "authors": set()}
         )
         self.collections_by_title_only: Counter[str] = Counter()
-        self.hubs_data = defaultdict(lambda: {"version_count": 0, "title": ""})
+        self.collection_titles_to_ids: Dict[str, set] = defaultdict(set)
+        self.hubs_data = defaultdict(lambda: {"version_count": 0, "title": "", "poem_ids": set()})
+        self.poems_in_multiversions = 0
         self.checksum_counts: Counter[str] = Counter()
 
     def analyze_and_report(self):
@@ -108,6 +110,7 @@ class CorpusAnalyzer:
             collection_entry["poem_count"] += 1
             if collection_title:
                 collection_entry["titles"].add(collection_title)
+                self.collection_titles_to_ids[collection_title].add(collection_page_id)
             if author:
                 collection_entry["authors"].add(author)
                 self.authors_data[author]["collection_ids"].add(collection_page_id)
@@ -126,8 +129,11 @@ class CorpusAnalyzer:
 
         # --- Analyse des Hubs (Multi-versions) ---
         hub_id = poem.get("hub_page_id")
+        poem_id = poem.get("page_id")
         if hub_id is not None:
             self.hubs_data[hub_id]["version_count"] += 1
+            if poem_id is not None:
+                self.hubs_data[hub_id]["poem_ids"].add(poem_id)
             if not self.hubs_data[hub_id]["title"]:
                 self.hubs_data[hub_id]["title"] = poem.get("hub_title") or f"Poème autonome: {poem.get('title', 'N/A')}"
 
@@ -214,8 +220,19 @@ class CorpusAnalyzer:
         print_header("Analyse des Versions et Doublons")
         real_hubs = {k: v for k, v in self.hubs_data.items() if v["version_count"] > 1}
         print_stat("Hubs multi-versions réels (>1 poème)", len(real_hubs))
+        
+        # Calcul du nombre de poèmes dans des hubs multi-versions
+        poems_in_multiversions = sum(len(v["poem_ids"]) for v in real_hubs.values())
+        print_stat("Poèmes dans des hubs multi-versions", poems_in_multiversions, self.total_poems)
+        
         exact_duplicates = sum(count - 1 for count in self.checksum_counts.values() if count > 1)
         print_stat("Contenus wikitext strictement identiques (doublons)", exact_duplicates)
+        
+        # Analyse des recueils partageant le même titre
+        duplicate_titles = {title: ids for title, ids in self.collection_titles_to_ids.items() if len(ids) > 1}
+        print_stat("Titres de recueils partagés par plusieurs IDs", len(duplicate_titles))
+        total_collections_with_duplicate_titles = sum(len(ids) for ids in duplicate_titles.values())
+        print_stat("Nombre total de recueils concernés", total_collections_with_duplicate_titles, len(self.collections_by_id))
         
         # --- Section 6: Classements (Top 10) ---
         print_header("Classements (Top 10)")

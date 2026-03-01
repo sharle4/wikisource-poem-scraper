@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup, Tag
 from .schemas import PoemSchema, PoemMetadata, Collection
 from .parsing import PoemParser
 from .exceptions import PoemParsingError
+from .author_cleaner import clean_author_name
 
 logger = logging.getLogger(__name__)
 collection_log = logging.getLogger('collection_processing')
@@ -129,7 +130,7 @@ class PoemProcessor:
                 value = element.get_text(strip=True) or element.get("content", "").strip()
 
             if value:
-                metadata[key] = value
+                metadata[key] = clean_author_name(value) if key == "author" else value
                 
         return metadata
 
@@ -142,11 +143,11 @@ class PoemProcessor:
             name = template.name.strip().lower()
 
             if name in ["auteur", "author"] and template.has(1):
-                metadata.setdefault("author", template.get(1).value.strip())
+                metadata.setdefault("author", clean_author_name(template.get(1).value.strip()))
 
             if name == "titre":
                 if template.has("auteur"):
-                     metadata.setdefault("author", template.get("auteur").value.strip())
+                     metadata.setdefault("author", clean_author_name(template.get("auteur").value.strip()))
                 if template.has("recueil"):
                      metadata.setdefault("source_collection", template.get("recueil").value.strip())
 
@@ -156,9 +157,9 @@ class PoemProcessor:
                     wikilinks = author_node.filter_wikilinks()
                     if wikilinks:
                         author_name = wikilinks[0].title.split(":")[-1].strip()
-                        metadata.setdefault("author", author_name)
+                        metadata.setdefault("author", clean_author_name(author_name))
                     else:
-                         metadata.setdefault("author", author_node.strip_code().strip())
+                         metadata.setdefault("author", clean_author_name(author_node.strip_code().strip()))
                 if template.has("ANNÉE"):
                     metadata.setdefault(
                         "publication_date", template.get("ANNÉE").value.strip_code().strip()

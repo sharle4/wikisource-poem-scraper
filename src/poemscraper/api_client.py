@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import time
+import collections
 from typing import Dict, Any, Optional, AsyncGenerator
 
 import aiohttp
@@ -8,7 +10,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/4.7.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/4.8.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -26,13 +28,15 @@ class WikiAPIClient:
     """
     Client API MediaWiki asynchrone, respectueux des règles.
     """
-    def __init__(self, api_endpoint: str, max_concurrent_requests: int = 5, bot_username: Optional[str] = None, bot_password: Optional[str] = None):
+    def __init__(self, api_endpoint: str, max_concurrent_requests: int = 3, bot_username: Optional[str] = None, bot_password: Optional[str] = None):
         self.api_endpoint = api_endpoint
         self.headers = {"User-Agent": WIKIMEDIA_USER_AGENT}
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
         self.session: Optional[aiohttp.ClientSession] = None
         self.bot_username = bot_username
         self.bot_password = bot_password
+        self._request_lock = asyncio.Lock()
+        self._request_times = collections.deque(maxlen=10)
 
     async def __aenter__(self):
         cookie_jar = aiohttp.CookieJar(unsafe=True)
@@ -93,6 +97,18 @@ class WikiAPIClient:
             return e.status in [500, 502, 503, 504]
         return isinstance(e, (aiohttp.ClientConnectionError, asyncio.TimeoutError))
 
+    async def _throttle(self):
+        async with self._request_lock:
+            now = time.time()
+            if len(self._request_times) == 10:
+                elapsed_since_10th = now - self._request_times[0]
+                if elapsed_since_10th < 1.0:
+                    sleep_time = 1.0 - elapsed_since_10th
+                    logger.debug(f"Rate limiting requests to 10 RPS, sleeping for {sleep_time:.2f}s")
+                    await asyncio.sleep(sleep_time)
+                    now = time.time()
+            self._request_times.append(now)
+
     @backoff.on_exception(backoff.expo, (aiohttp.ClientError, asyncio.TimeoutError),
                           max_tries=5, giveup=lambda e: not WikiAPIClient._should_retry(e),
                           logger=logger)
@@ -111,11 +127,13 @@ class WikiAPIClient:
         sanitized_params.update({"format": "json", "formatversion": "2"})
         
         async with self.semaphore:
+            await self._throttle()
             logger.debug(f"API Request: {sanitized_params}")
             while True:
+                start_time = time.time()
                 async with self.session.get(self.api_endpoint, params=sanitized_params) as response:
+                    elapsed = time.time() - start_time
                     if response.status == 429:
-                        # Fetch and log cookies on rate-limit as requested by the admin
                         cookies = self.session.cookie_jar.filter_cookies(self.api_endpoint)
                         cookie_names = list(cookies.keys())
                         retry_after = response.headers.get("Retry-After")
@@ -134,10 +152,19 @@ class WikiAPIClient:
                             logger.warning(f"No Retry-After header provided, waiting {wait_time}s")
                         
                         await asyncio.sleep(wait_time)
-                        continue  # Retry request after sleep
+                        continue
+
+                    if response.status == 403:
+                        body = await response.text()
+                        logger.error(f"403 Forbidden. Response body:\n{body}")
                         
                     response.raise_for_status()
                     data = await response.json()
+                    
+                    if elapsed > 1.0:
+                        logger.warning(f"Action API request took {elapsed:.2f}s (>1s limit). Waiting 5 seconds to respect expensive endpoint policy.")
+                        await asyncio.sleep(5)
+                        
                     if "error" in data: logger.error(f"MediaWiki API Error: {data['error']}")
                     return data
 
@@ -193,11 +220,39 @@ class WikiAPIClient:
             else:
                 break
 
-    async def get_rendered_html(self, page_id: int) -> Optional[str]:
-        """Fetches the rendered HTML of a page."""
-        params = {"action": "parse", "pageid": page_id, "prop": "text", "disabletoc": True, "disableeditsection": True}
-        data = await self._make_request(params)
-        return data.get("parse", {}).get("text")
+    @backoff.on_exception(backoff.expo, (aiohttp.ClientError, asyncio.TimeoutError),
+                          max_tries=5, giveup=lambda e: not WikiAPIClient._should_retry(e),
+                          logger=logger)
+    async def get_rendered_html(self, page_title: str) -> Optional[str]:
+        """Fetches the rendered HTML of a page using the REST API."""
+        if not self.session: raise RuntimeError("ClientSession not initialized.")
+        base_url = self.api_endpoint.replace("/w/api.php", "")
+        import urllib.parse
+        encoded_title = urllib.parse.quote(page_title.replace(" ", "_"))
+        url = f"{base_url}/api/rest_v1/page/html/{encoded_title}"
+
+        async with self.semaphore:
+            await self._throttle()
+            while True:
+                start_time = time.time()
+                async with self.session.get(url, headers={"User-Agent": WIKIMEDIA_USER_AGENT + " (REST API call)"}) as response:
+                    elapsed = time.time() - start_time
+                    if response.status == 429:
+                        retry_after = response.headers.get("Retry-After")
+                        wait_time = int(retry_after) if retry_after and retry_after.isdigit() else 5
+                        await asyncio.sleep(wait_time)
+                        continue
+                    if response.status == 404:
+                        logger.warning(f"REST API returned 404 for '{page_title}'.")
+                        return None
+                    response.raise_for_status()
+                    html_content = await response.text()
+                    
+                    if elapsed > 1.0:
+                        logger.warning(f"REST API request took {elapsed:.2f}s (>1s limit). Waiting 5 seconds...")
+                        await asyncio.sleep(5)
+                        
+                    return html_content
     
     async def get_resolved_page_data(self, page_id: int) -> Optional[Dict[str, Any]]:
         """

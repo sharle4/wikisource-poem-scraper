@@ -280,9 +280,9 @@ class ScraperOrchestrator:
             timestamp = datetime.now(timezone.utc)
             page_title = page_data.get('title', 'N/A')
             page_html = await self._retry_call(
-                lambda: client.get_rendered_html(final_page_id),
+                lambda: client.get_rendered_html(page_title),
                 op_name="get_rendered_html",
-                ctx=f"page_id={final_page_id}"
+                ctx=f"page_title={page_title}"
             )
             if not page_html:
                 raise PageProcessingError(f"API did not return HTML for final page ID {final_page_id}.")
@@ -432,7 +432,9 @@ class ScraperOrchestrator:
                 elif item_type == PageType.POEM:
                     if title in resolved_pages:
                         page_info = resolved_pages[title]
-                        poem_info = PoemInfo(title=title, page_id=page_info['pageid'], url=f"https://{self.config.lang}.wikisource.org/?curid={page_info['pageid']}")
+                        import urllib.parse
+                        encoded_title = urllib.parse.quote(title.replace(" ", "_"))
+                        poem_info = PoemInfo(title=title, page_id=page_info['pageid'], url=page_info.get("fullurl", f"https://{self.config.lang}.wikisource.org/wiki/{encoded_title}"))
                         
                         if current_section_obj:
                             current_section_obj.poems.append(poem_info)

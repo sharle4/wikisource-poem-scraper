@@ -97,7 +97,7 @@ def main_cli():
     p_scrape.add_argument("--lang", type=str, required=True, help="Code langue (ex: 'fr', 'en').")
     p_scrape.add_argument("--category", type=str, required=True, help="Catégorie racine (ex: 'Poèmes par Auteur').")
     p_scrape.add_argument("--output_dir", type=Path, default=Path("./data"), help="Répertoire de sortie (défaut: ./data/).")
-    p_scrape.add_argument("--workers", type=int, default=10, help="Nombre de requêtes parallèles (défaut: 10).")
+    p_scrape.add_argument("--workers", type=int, default=3, help="Nombre de requêtes parallèles (défaut: 3).")
     p_scrape.add_argument("--limit", type=int, default=None, help="Limite le nombre de pages à traiter (pour test).")
     p_scrape.add_argument("--resume", action="store_true", help="Reprendre un scraping interrompu.")
     p_scrape.add_argument("--tree-log", action="store_true", help="Générer des logs d'exploration en arborescence.")
@@ -108,7 +108,7 @@ def main_cli():
     p_enrich.add_argument("--input", "-i", type=Path, required=True, help="Fichier d'entrée (ex: data/poems.cleaned.jsonl.gz).")
     p_enrich.add_argument("--output", "-o", type=Path, required=True, help="Fichier de sortie enrichi (ex: data/poems.enriched.jsonl.gz).")
     p_enrich.add_argument("--lang", type=str, required=True, help="Code langue du projet Wikisource correspondant aux données.")
-    p_enrich.add_argument("--workers", type=int, default=20, help="Nombre de requêtes API parallèles (défaut: 20).")
+    p_enrich.add_argument("--workers", type=int, default=3, help="Nombre de requêtes API parallèles (défaut: 3).")
     p_enrich.set_defaults(func=run_enricher)
     
     # --- Commande 'clean' ---

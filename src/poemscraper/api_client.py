@@ -8,7 +8,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/4.6.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/4.7.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -90,7 +90,7 @@ class WikiAPIClient:
     @staticmethod
     def _should_retry(e: Exception) -> bool:
         if isinstance(e, aiohttp.ClientResponseError):
-            return e.status in [429, 500, 502, 503, 504]
+            return e.status in [500, 502, 503, 504]
         return isinstance(e, (aiohttp.ClientConnectionError, asyncio.TimeoutError))
 
     @backoff.on_exception(backoff.expo, (aiohttp.ClientError, asyncio.TimeoutError),
@@ -112,11 +112,34 @@ class WikiAPIClient:
         
         async with self.semaphore:
             logger.debug(f"API Request: {sanitized_params}")
-            async with self.session.get(self.api_endpoint, params=sanitized_params) as response:
-                response.raise_for_status()
-                data = await response.json()
-                if "error" in data: logger.error(f"MediaWiki API Error: {data['error']}")
-                return data
+            while True:
+                async with self.session.get(self.api_endpoint, params=sanitized_params) as response:
+                    if response.status == 429:
+                        # Fetch and log cookies on rate-limit as requested by the admin
+                        cookies = self.session.cookie_jar.filter_cookies(self.api_endpoint)
+                        cookie_names = list(cookies.keys())
+                        retry_after = response.headers.get("Retry-After")
+                        
+                        logger.warning(f"Rate limited (429). Found cookies: {cookie_names}")
+                        
+                        if retry_after:
+                            try:
+                                wait_time = int(retry_after)
+                                logger.warning(f"Respecting Retry-After: waiting {wait_time}s")
+                            except ValueError:
+                                wait_time = 5
+                                logger.warning(f"Invalid Retry-After '{retry_after}', waiting {wait_time}s")
+                        else:
+                            wait_time = 5
+                            logger.warning(f"No Retry-After header provided, waiting {wait_time}s")
+                        
+                        await asyncio.sleep(wait_time)
+                        continue  # Retry request after sleep
+                        
+                    response.raise_for_status()
+                    data = await response.json()
+                    if "error" in data: logger.error(f"MediaWiki API Error: {data['error']}")
+                    return data
 
     async def get_page_info_and_redirects(self, page_titles: list[str]) -> Optional[dict]:
         """Gets basic info for pages, resolving redirects."""

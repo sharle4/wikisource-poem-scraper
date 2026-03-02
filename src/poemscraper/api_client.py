@@ -10,7 +10,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "WikisourcePoemScraper/4.8.0 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
+    "WikisourcePoemScraper/4.8.1 (https://github.com/sharle4/wikisource-poem-scraper; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -224,18 +224,18 @@ class WikiAPIClient:
                           max_tries=5, giveup=lambda e: not WikiAPIClient._should_retry(e),
                           logger=logger)
     async def get_rendered_html(self, page_title: str) -> Optional[str]:
-        """Fetches the rendered HTML of a page using the REST API."""
+        """Fetches the rendered HTML of a page using the standard website URLs."""
         if not self.session: raise RuntimeError("ClientSession not initialized.")
         base_url = self.api_endpoint.replace("/w/api.php", "")
         import urllib.parse
         encoded_title = urllib.parse.quote(page_title.replace(" ", "_"))
-        url = f"{base_url}/api/rest_v1/page/html/{encoded_title}"
+        url = f"{base_url}/wiki/{encoded_title}"
 
         async with self.semaphore:
             await self._throttle()
             while True:
                 start_time = time.time()
-                async with self.session.get(url, headers={"User-Agent": WIKIMEDIA_USER_AGENT + " (REST API call)"}) as response:
+                async with self.session.get(url, headers={"User-Agent": WIKIMEDIA_USER_AGENT + " (Live Site HTML Fetch)"}) as response:
                     elapsed = time.time() - start_time
                     if response.status == 429:
                         retry_after = response.headers.get("Retry-After")
@@ -243,13 +243,13 @@ class WikiAPIClient:
                         await asyncio.sleep(wait_time)
                         continue
                     if response.status == 404:
-                        logger.warning(f"REST API returned 404 for '{page_title}'.")
+                        logger.warning(f"Website returned 404 for '{page_title}'.")
                         return None
                     response.raise_for_status()
                     html_content = await response.text()
                     
                     if elapsed > 1.0:
-                        logger.warning(f"REST API request took {elapsed:.2f}s (>1s limit). Waiting 5 seconds...")
+                        logger.warning(f"Live website request took {elapsed:.2f}s (>1s limit). Waiting 5 seconds...")
                         await asyncio.sleep(5)
                         
                     return html_content

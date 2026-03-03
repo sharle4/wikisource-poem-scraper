@@ -98,6 +98,44 @@ class DatabaseManager:
             ),
         )
 
+    def initialize_sync(self) -> tuple[sqlite3.Connection, sqlite3.Cursor]:
+        """Synchronous initialization for offline mode.
+        Creates the poems table and returns a (connection, cursor) pair."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS poems (
+                page_id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                author TEXT,
+                publication_date TEXT,
+                language TEXT NOT NULL,
+                checksum_sha256 TEXT NOT NULL,
+                extraction_timestamp TEXT NOT NULL,
+
+                collection_page_id INTEGER,
+                collection_title TEXT,
+                section_title TEXT,
+                poem_order INTEGER,
+
+                hub_title TEXT,
+                hub_page_id INTEGER NOT NULL
+            )
+            """
+        )
+        conn.commit()
+        logger.info(f"Database initialized (sync) at {self.db_path}")
+        return conn, cursor
+
+    def get_all_processed_ids_sync(self) -> Set[int]:
+        """Synchronous version of get_all_processed_ids for offline resume mode."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute("SELECT page_id FROM poems")
+        ids = {row[0] for row in cursor.fetchall()}
+        conn.close()
+        return ids
+
     async def close(self):
         """Ferme la connexion asynchrone à la base de données."""
         if self.conn:

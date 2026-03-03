@@ -111,7 +111,7 @@ class PoemSchema(BaseModel):
     extraction_timestamp: datetime.datetime = Field(
         ..., description="Timestamp ISO 8601 (UTC) de l'extraction."
     )
-    provenance: Literal["api"] = Field(
+    provenance: Literal["api", "dump"] = Field(
         "api", description="Source de la donnée."
     )
 

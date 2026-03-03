@@ -214,3 +214,9 @@ __marimo__/
 
 # Cookies
 .wiki_cookies.pickle
+
+# Dumps
+dumps/*
+
+# Claude
+.claude/*

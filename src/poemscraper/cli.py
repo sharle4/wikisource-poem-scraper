@@ -20,14 +20,28 @@ from .debugger import main as debugger_main
 def run_scraper(args: argparse.Namespace):
     """Lance le processus de scraping principal."""
     try:
-        log_manager = LogManager(args.output_dir / "logs")
-        orchestrator = ScraperOrchestrator(
-            config=args, 
-            log_manager=log_manager,
-            bot_username=args.bot_user,
-            bot_password=args.bot_pass
-        )
-        asyncio.run(orchestrator.run())
+        if getattr(args, "mode", "online") == "offline":
+            dumps_dir = getattr(args, "dumps_dir", None)
+            if not dumps_dir:
+                logging.critical("--dumps-dir is required for offline mode.")
+                sys.exit(1)
+            if not dumps_dir.exists():
+                logging.critical(f"Dumps directory not found: {dumps_dir}")
+                sys.exit(1)
+
+            from .offline_core import OfflineOrchestrator
+            log_manager = LogManager(args.output_dir / "logs")
+            orchestrator = OfflineOrchestrator(config=args, log_manager=log_manager)
+            orchestrator.run()
+        else:
+            log_manager = LogManager(args.output_dir / "logs")
+            orchestrator = ScraperOrchestrator(
+                config=args,
+                log_manager=log_manager,
+                bot_username=args.bot_user,
+                bot_password=args.bot_pass
+            )
+            asyncio.run(orchestrator.run())
     except KeyboardInterrupt:
         logging.info("Processus de scraping interrompu. Arrêt en cours.")
     except Exception as e:
@@ -84,7 +98,7 @@ def run_debugger(args: argparse.Namespace):
 def main_cli():
     """Point d'entrée principal de l'interface en ligne de commande."""
     parser = argparse.ArgumentParser(
-        description="Wikisource Poem Scraper v4 - Un outil complet pour scraper, nettoyer et analyser des poèmes.",
+        description="Wikisource Poem Scraper v5 - Un outil complet pour scraper (online/offline), nettoyer et analyser des poèmes.",
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(
@@ -101,6 +115,14 @@ def main_cli():
     p_scrape.add_argument("--limit", type=int, default=None, help="Limite le nombre de pages à traiter (pour test).")
     p_scrape.add_argument("--resume", action="store_true", help="Reprendre un scraping interrompu.")
     p_scrape.add_argument("--tree-log", action="store_true", help="Générer des logs d'exploration en arborescence.")
+    p_scrape.add_argument(
+        "--mode", type=str, choices=["online", "offline"], default="online",
+        help="Scraping mode: 'online' (API, default) or 'offline' (local dumps)."
+    )
+    p_scrape.add_argument(
+        "--dumps-dir", type=Path, default=None,
+        help="Directory containing Wikimedia dump files (required for offline mode)."
+    )
     p_scrape.set_defaults(func=run_scraper)
 
     # --- Commande 'enrich' ---

@@ -216,7 +216,11 @@ __marimo__/
 .wiki_cookies.pickle
 
 # Dumps
-dumps/*
+*.ndjson
+*.tar.gz
+*.sql
+*.json
+*.xml*
 
 # Claude
 .claude/*

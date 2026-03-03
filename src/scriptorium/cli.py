@@ -98,7 +98,7 @@ def run_debugger(args: argparse.Namespace):
 def main_cli():
     """Point d'entrée principal de l'interface en ligne de commande."""
     parser = argparse.ArgumentParser(
-        description="Wikisource Poem Scraper v5 - Un outil complet pour scraper (online/offline), nettoyer et analyser des poèmes.",
+        description="Scriptorium v5 - Un outil complet pour scraper (online/offline), nettoyer et analyser des poèmes.",
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(

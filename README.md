@@ -1,62 +1,59 @@
-# Wikisource Poem Scraper v5.0.0
+<div align="center">
 
-A Python tool that extracts, classifies, and structures poetry from Wikisource (primarily fr.wikisource.org) into clean, validated JSONL files.
+# 📜 Scriptorium v5
 
-It works in two modes:
+**Build structured corpora from Wikisource — online or offline.**
 
-- **Online mode** queries the MediaWiki API and fetches live rendered HTML. Good for incremental or targeted runs.
-- **Offline mode** processes local Wikimedia dump files (SQL, XML, NDJSON) entirely locally. Good for building the full corpus without hitting any API.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Wikisource](https://img.shields.io/badge/source-fr.wikisource.org-orange.svg)](https://fr.wikisource.org)
 
-Both modes share the same classification and parsing logic and produce the same output schema. The only difference in the output is the `provenance` field (`"api"` vs `"dump"`).
-
-> **Data license:** The source code is MIT-licensed. The extracted data is subject to Wikisource's own licenses (typically Public Domain or CC-BY-SA). Respect them.
+</div>
 
 ---
 
-<details>
-<summary><strong>Setting Up a Bot Account (Online Mode)</strong></summary>
+A Python tool that discovers poems through category-tree traversal on Wikisource, classifies each page by type, extracts verse structure from rendered HTML, and writes validated JSONL output. It handles collections (with section titles and reading order), multi-version hubs, and author normalization automatically.
 
-### Why bother?
+Two modes cover different needs. **Online mode** queries the MediaWiki API and fetches live HTML — ideal for incremental or targeted runs. **Offline mode** processes local Wikimedia dump files (SQL, XML, NDJSON) with zero network I/O — ideal for building the full corpus in one batch. Both share the same classification engine and produce identical output schemas; only the `provenance` field differs (`"api"` vs `"dump"`).
 
-Anonymous API requests are heavily rate-limited. Sustained scraping without authentication risks HTTP 429 errors or IP bans. A bot account gives you higher rate limits and signals to Wikimedia that you are a legitimate automated client.
+> **Data license:** Source code is MIT-licensed. Extracted data is subject to Wikisource's own licenses (typically Public Domain or CC-BY-SA).
 
-### How to create one
+## ✨ Features
 
-1. Log in to your Wikisource account (e.g., on `fr.wikisource.org`). Create one if you don't have one.
-2. Go to **Special:BotPasswords** (`https://fr.wikisource.org/wiki/Special:BotPasswords`).
-3. Enter a bot name (e.g., `PoemScraper`). Your login name will be `YourUsername@PoemScraper`.
-4. Grant at least **Basic rights** and **High-volume editing**. Click **Create**.
-5. Save the generated password. It is shown only once.
+- 🔄 **Dual-mode pipeline** — online (async API) or offline (local dumps), same output schema
+- 📚 **Collection-aware** — resolves poems to parent collections with section titles and reading order
+- 🔀 **Hub support** — groups multiple editions of the same poem under a single hub
+- 👤 **Author normalization** — cleans names from HTML microdata and wikitext templates
+- 📊 **Structured output** — stanzas, verses, metadata, and normalized text in Pydantic-validated JSONL
+- 🔁 **Resumable** — SQLite index tracks progress; interrupted runs pick up where they left off
+- 🤖 **Bot authentication** — higher API rate limits via Wikisource bot account
+- 🧹 **Post-processing** — built-in deduplication, enrichment, and corpus analysis commands
 
-### Configure the scraper
-
-Create a `.env` file at the project root:
-
-```env
-WIKISOURCE_BOT_USERNAME=YourUsername@PoemScraper
-WIKISOURCE_BOT_PASSWORD=the_generated_password
-```
-
-The scraper loads these automatically. You can also pass `--bot-user` and `--bot-pass` on the command line.
-
-</details>
-
-<details>
-<summary><strong>Installation & Prerequisites</strong></summary>
-
-### Python
-
-Requires **Python 3.10+** (tested up to 3.12).
-
-### Install
+## 🚀 Quickstart
 
 ```bash
 git clone https://github.com/sharle4/wikisource-poem-scraper.git
 cd wikisource-poem-scraper
-python -m venv .venv
-source .venv/bin/activate   # Linux/macOS
-# .venv\Scripts\activate    # Windows
+python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e .
+```
+
+**Online mode:**
+
+```bash
+wikisourcescraper scrape --lang fr --category "Poèmes par Auteur" --workers 15
+```
+
+**Offline mode:**
+
+```bash
+wikisourcescraper scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --workers 8
+```
+
+**Resume an interrupted run:**
+
+```bash
+wikisourcescraper scrape --lang fr --category "Poèmes" --resume
 ```
 
 For development tools (pytest, black, mypy):
@@ -65,11 +62,36 @@ For development tools (pytest, black, mypy):
 pip install -e ".[dev]"
 ```
 
-### Dump files for offline mode
+## 🔧 Setup & Credentials
 
-Offline mode needs three types of dump files, all placed in a single directory:
+<details>
+<summary><strong>Online mode — Bot account (recommended)</strong></summary>
 
-**SQL dumps** and **XML dumps** are freely available from `https://dumps.wikimedia.org/frwikisource/latest/`:
+Anonymous API requests are rate-limited. A bot account gives higher limits and signals legitimate automated use to Wikimedia.
+
+1. Log in to your Wikisource account (e.g., `fr.wikisource.org`). Create one if needed.
+2. Go to **Special:BotPasswords** (`https://fr.wikisource.org/wiki/Special:BotPasswords`).
+3. Enter a bot name (e.g., `Scraper`). Your login will be `YourUsername@Scraper`.
+4. Grant **Basic rights** and **High-volume editing**. Click **Create**.
+5. Save the generated password (shown once).
+
+Create a `.env` file at the project root:
+
+```env
+WIKISOURCE_BOT_USERNAME=YourUsername@Scraper
+WIKISOURCE_BOT_PASSWORD=the_generated_password
+```
+
+Or pass `--bot-user` and `--bot-pass` on the command line.
+
+</details>
+
+<details>
+<summary><strong>Offline mode — Dump files (~35 GB)</strong></summary>
+
+Offline mode needs three types of dump files in a single directory.
+
+**SQL + XML dumps** — freely available from `https://dumps.wikimedia.org/frwikisource/latest/`:
 
 | File | Size | Content |
 |---|---|---|
@@ -77,85 +99,25 @@ Offline mode needs three types of dump files, all placed in a single directory:
 | `frwikisource-latest-categorylinks.sql` | ~743 MB | Category membership |
 | `frwikisource-latest-linktarget.sql` | ~887 MB | Category name resolution |
 | `frwikisource-latest-redirect.sql` | ~4.5 MB | Redirects |
-| `frwikisource-latest-pages-articles1.xml-*` (4 files) | ~11.4 GB | Raw wikitext for all pages |
+| `frwikisource-latest-pages-articles1.xml-*` (4 files) | ~11.4 GB | Raw wikitext |
 
-**HTML NDJSON dumps** require a free Wikimedia Enterprise account:
+**HTML NDJSON dumps** — require a free [Wikimedia Enterprise](https://enterprise.wikimedia.com/) account:
 
-1. Create an account at `https://enterprise.wikimedia.com/`.
-2. Use the provided PowerShell script to download and extract the dumps:
+```powershell
+# Edit credentials in the script first
+.\dumps\download_enterprise_dumps.ps1
+```
 
-   ```powershell
-   # Edit your credentials in the script first
-   .\dumps\download_enterprise_dumps.ps1
-   ```
+Downloads `frwikisource_namespace_0_*.ndjson` (10 files, ~21 GB) with fully rendered HTML for every namespace-0 page.
 
-   This downloads `frwikisource_namespace_0_*.ndjson` (10 files, ~21 GB total) containing the fully rendered HTML for every namespace-0 page.
-
-**Total disk space needed:** ~35 GB for dumps, plus 2-4 GB for the generated index.
+**Total disk space:** ~35 GB for dumps + 2–4 GB for the generated index.
 
 </details>
 
-<details>
-<summary><strong>CLI Usage Guide</strong></summary>
-
-After installation, the tool is available as `poemscraper` or `python -m poemscraper`.
-
-### Scraping
-
-**Online mode (default):**
-
-```bash
-poemscraper scrape --lang fr --category "Poèmes par Auteur" --workers 15 --tree-log
-```
-
-**Offline mode:**
-
-```bash
-poemscraper scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --workers 8
-```
-
-**Resume an interrupted run** (works in both modes):
-
-```bash
-poemscraper scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --resume
-```
-
-### Scrape options
-
-| Option | Default | Description |
-|---|---|---|
-| `--lang` | *(required)* | Wikisource language code (`fr`, `en`, etc.) |
-| `--category` | *(required)* | Root category to start from |
-| `--output_dir` | `./data/` | Where to write output files |
-| `--workers` | `3` | Online: concurrent HTTP requests. Offline: CPU cores for multiprocessing. |
-| `--limit` | `None` | Process at most N pages (for testing) |
-| `--resume` | `false` | Skip already-processed pages using the SQLite index |
-| `--tree-log` | `false` | Write per-author exploration tree logs |
-| `--mode` | `online` | `online` or `offline` |
-| `--dumps-dir` | `None` | Path to dump files (required for offline) |
-| `--bot-user` | `$WIKISOURCE_BOT_USERNAME` | Bot username (online only) |
-| `--bot-pass` | `$WIKISOURCE_BOT_PASSWORD` | Bot password (online only) |
-
-### Post-processing commands
-
-```bash
-# Enrich: fill in missing collection_page_id values via the API (online mode output only)
-poemscraper enrich -i data/poems.cleaned.jsonl.gz -o data/poems.enriched.jsonl.gz --lang fr
-
-# Clean: deduplicate by page_id, normalize titles
-poemscraper clean -i data/poems.jsonl.gz -o data/poems.cleaned.jsonl.gz
-
-# Analyze: print corpus statistics (author counts, collection sizes, verse counts, etc.)
-poemscraper analyze data/poems.cleaned.jsonl.gz
-
-# Debug: extract poems with a collection_title but no collection_page_id
-poemscraper debug -i data/poems.enriched.jsonl.gz -o data/debug.unidentified.jsonl.gz
-```
-
-</details>
+---
 
 <details>
-<summary><strong>Output Data Structure</strong></summary>
+<summary><strong>📦 Output Data Structure</strong></summary>
 
 ### Output files
 
@@ -163,9 +125,9 @@ Each run produces three files in `--output_dir`:
 
 | File | Description |
 |---|---|
-| `poems.jsonl.gz` | One JSON object per line, per extracted poem (may contain duplicates in online mode) |
-| `poems.cleaned.jsonl.gz` | Deduplicated, title-normalized version. One unique poem per `page_id`. |
-| `poems_index.sqlite` | Lightweight SQLite index for fast lookups and resume support |
+| `poems.jsonl.gz` | One JSON per line per poem (may contain duplicates in online mode) |
+| `poems.cleaned.jsonl.gz` | Deduplicated, title-normalized. One unique poem per `page_id`. |
+| `poems_index.sqlite` | SQLite index for fast lookups and resume support |
 
 ### Example record
 
@@ -205,53 +167,50 @@ Each run produces three files in `--output_dir`:
 }
 ```
 
-### Key fields explained
+### Key fields
 
-| Field | What it is |
+| Field | Description |
 |---|---|
-| `normalized_text` | Flat text of the poem. Verses joined by `\n`, stanzas by `\n\n`. Main field for NLP. |
-| `raw_wikitext` | Original MediaWiki markup of the page revision. Useful for editorial analysis. |
-| `structure.stanzas` | Nested array: list of stanzas, each a list of verse strings. |
-| `metadata.author` | Author name, extracted from HTML microdata or wikitext templates, then normalized. |
-| `collection_page_id` | Links this poem to its parent collection's MediaWiki page. `null` if unknown. |
-| `section_title` | Section name within the collection (e.g., "Spleen et Ideal"). |
-| `poem_order` | Zero-based position in the collection. Allows reconstructing reading order. |
-| `hub_page_id` | Groups multiple editions of the same poem. Equals own `page_id` if standalone. |
-| `collection_structure` | Full collection structure object. Only present on the *first* poem of each collection to avoid duplication. |
-| `provenance` | `"api"` (online mode) or `"dump"` (offline mode). |
+| `normalized_text` | Flat text. Verses joined by `\n`, stanzas by `\n\n`. Main field for NLP. |
+| `raw_wikitext` | Original MediaWiki markup. Useful for editorial analysis. |
+| `structure.stanzas` | Nested array: stanzas → verses. |
+| `metadata.author` | From HTML microdata or wikitext templates, normalized. |
+| `collection_page_id` | Links poem to parent collection page. `null` if unknown. |
+| `section_title` | Section within the collection (e.g., "Spleen et Idéal"). |
+| `poem_order` | Zero-based position in collection. Reconstructs reading order. |
+| `hub_page_id` | Groups multiple editions. Equals own `page_id` if standalone. |
+| `collection_structure` | Full structure object (first poem of each collection only). |
+| `provenance` | `"api"` (online) or `"dump"` (offline). |
 | `checksum_sha256` | SHA-256 of `raw_wikitext`. For deduplication and integrity. |
 
 </details>
 
 <details>
-<summary><strong>Architecture & Inner Workings</strong></summary>
+<summary><strong>🏗️ Architecture</strong></summary>
 
-### The shared parsing brain
+### Shared parsing engine
 
-Both modes use the exact same modules for classification and extraction:
+Both modes use the same modules for classification and extraction:
 
-- **`classifier.py`** classifies each page as `POEM`, `POETIC_COLLECTION`, `MULTI_VERSION_HUB`, `AUTHOR`, `DISAMBIGUATION`, or `OTHER` using category membership and HTML structure signals (presence of `<div class="poem">`, table of contents, Wikidata links, etc.).
-- **`parsing.py`** extracts poem structure from rendered HTML by finding `<div class="poem">` or `<poem>` blocks, splitting text into stanzas and verses.
-- **`processors.py`** merges HTML metadata (`itemprop` attributes) with wikitext template metadata (`mwparserfromhell`), normalizes author names, and produces the validated `PoemSchema`.
+- **`classifier.py`** — classifies pages as `POEM`, `POETIC_COLLECTION`, `MULTI_VERSION_HUB`, `AUTHOR`, `DISAMBIGUATION`, or `OTHER` using category membership and HTML structure signals.
+- **`parsing.py`** — extracts poem structure from rendered HTML (`<div class="poem">` / `<poem>` blocks), splitting into stanzas and verses.
+- **`processors.py`** — merges HTML metadata (`itemprop`) with wikitext template metadata (`mwparserfromhell`), normalizes author names, produces validated `PoemSchema`.
 
-**Why parse HTML instead of just wikitext?** On Wikisource, most poem text is not inline in the article's wikitext. Instead, articles use ProofreadPage transclusion directives like `<pages index="Book.djvu" from=42 to=43 />`, which pull text from separate scan pages. The raw wikitext contains only this directive, not the actual verses. Only the rendered HTML (from the live site or the NDJSON dumps) has the fully resolved poem content. The raw wikitext is still used for template-based metadata and the `checksum_sha256` field.
+**Why HTML, not just wikitext?** Most Wikisource poems use ProofreadPage transclusion (`<pages index="Book.djvu" from=42 to=43 />`). The raw wikitext contains only this directive, not actual verses. Only the rendered HTML has fully resolved poem content.
 
-### Online pipeline (network-bound)
+### Online pipeline
 
-Uses an async Producer-Consumer model:
+Async Producer-Consumer model:
 
-1. **Producer** crawls the category tree via the MediaWiki API, discovering pages.
-2. **N consumer tasks** (set by `--workers`) concurrently fetch each page's wikitext (API) and rendered HTML (live site), classify the page, and route it:
-   - `POEM` pages are processed and sent to the writer.
-   - `POETIC_COLLECTION` pages have their ordered poem links extracted and re-queued with collection context.
-   - `MULTI_VERSION_HUB` pages have their sub-versions extracted and re-queued with hub context.
-3. **Writer thread** handles all synchronous disk I/O (JSONL + SQLite) on a separate thread.
+1. **Producer** crawls the category tree via MediaWiki API.
+2. **N consumer tasks** (`--workers`) concurrently fetch wikitext + HTML, classify, and route pages.
+3. **Writer thread** handles all sync disk I/O (JSONL + SQLite).
 
-Rate limiting is enforced via a semaphore, a 10-RPS sliding window, exponential backoff on transient errors, and `Retry-After` header compliance on 429 responses.
+Rate limiting: semaphore, 10-RPS sliding window, exponential backoff, `Retry-After` compliance.
 
-### Offline pipeline (CPU/IO-bound)
+### Offline pipeline
 
-A sequential 5-phase batch pipeline with no network I/O:
+Sequential 5-phase batch pipeline with no network I/O:
 
 ```
 Phase 1          Phase 2           Phase 3          Phase 4          Phase 5
@@ -260,19 +219,69 @@ SQL Dumps ──────> NDJSON Files ───> In-Memory ─────�
     Index           (multiprocess)
 ```
 
-**Phase 1 -- Build index:** Parses the 4 SQL dump files into a local SQLite database. A custom state-machine parser handles MySQL `INSERT` syntax and decodes `varbinary` UTF-8 fields. Then performs a BFS traversal of the category tree to identify target page IDs.
+**Phase 1 — Build index:** Parses SQL dumps into SQLite. Custom state-machine parser handles MySQL `INSERT` syntax and `varbinary` UTF-8 decoding. BFS category-tree traversal finds target page IDs. Uses modern MediaWiki schema (`cl_target_id` → `linktarget` join).
 
-> Modern MediaWiki stores category membership using a numeric `cl_target_id` foreign key to the `linktarget` table, not a text `cl_to` column. This is why the `linktarget.sql` dump is required -- you must join through it to resolve category names.
+**Phase 2 — Stream NDJSON:** Streams ~21 GB of Enterprise HTML dumps. Regex pre-filter on raw bytes skips irrelevant pages before JSON parsing. Parallel classification via `ProcessPoolExecutor`. Collections and hubs trigger a bounded second pass for newly discovered pages.
 
-**Phase 2 -- Stream NDJSON:** Streams the ~21 GB of Enterprise HTML dumps. A regex pre-filter extracts each line's `"identifier"` from the raw bytes before doing a full JSON parse, skipping irrelevant pages. Matching pages are classified in parallel using `ProcessPoolExecutor`. Collections and hubs trigger a bounded second pass for any newly discovered poem pages.
+**Phase 3 — Enrich:** Maps poems to parent collections and hubs using in-memory data from Phase 2. No network calls.
 
-**Phase 3 -- Enrich:** Maps poems to their parent collections and hubs using the data gathered in Phase 2. No network calls needed -- the title-to-page_id mapping comes from the SQLite index.
+**Phase 4 — Extract wikitext:** Streams XML dumps with `iterparse` at constant memory. Provides `raw_wikitext` and `checksum_sha256` fields that NDJSON lacks.
 
-**Phase 4 -- Extract wikitext:** Streams the XML dumps using `iterparse` with constant memory. Only pages in the pending set are kept. This provides the `raw_wikitext` and `checksum_sha256` fields that the NDJSON dumps lack.
+> Why both NDJSON *and* XML? NDJSON has rendered HTML (resolved transclusions) but no wikitext. XML has raw wikitext but no rendered HTML. Both are needed.
 
-> Why both NDJSON *and* XML? NDJSON has the rendered HTML (with resolved transclusions) but no wikitext. XML has the raw wikitext but no rendered HTML. Both are needed.
+**Phase 5 — Write:** Processes each poem through `PoemProcessor.process()` (same code as online mode). Output sorted by `page_id` for reproducibility.
 
-**Phase 5 -- Write:** Each pending poem gets its wikitext injected, its HTML re-parsed, and is processed through `PoemProcessor.process()` (the same code as online mode). Output is written sorted by `page_id` for reproducibility.
+</details>
+
+<details>
+<summary><strong>📋 Full CLI Reference</strong></summary>
+
+After installation, the tool is available as `wikisourcescraper` or `python -m wikisource_scraper`.
+
+### Scraping
+
+```bash
+# Online (default)
+wikisourcescraper scrape --lang fr --category "Poèmes par Auteur" --workers 15 --tree-log
+
+# Offline
+wikisourcescraper scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --workers 8
+
+# Resume an interrupted run (either mode)
+wikisourcescraper scrape --lang fr --category "Poèmes" --resume
+```
+
+### Scrape options
+
+| Option | Default | Description |
+|---|---|---|
+| `--lang` | *(required)* | Wikisource language code (`fr`, `en`, etc.) |
+| `--category` | *(required)* | Root category to start from |
+| `--output_dir` | `./data/` | Output directory |
+| `--workers` | `3` | Online: concurrent requests. Offline: CPU cores. |
+| `--limit` | `None` | Process at most N pages (testing) |
+| `--resume` | `false` | Skip already-processed pages |
+| `--tree-log` | `false` | Write per-author exploration tree logs |
+| `--mode` | `online` | `online` or `offline` |
+| `--dumps-dir` | `None` | Path to dump files (required for offline) |
+| `--bot-user` | `$WIKISOURCE_BOT_USERNAME` | Bot username (online only) |
+| `--bot-pass` | `$WIKISOURCE_BOT_PASSWORD` | Bot password (online only) |
+
+### Post-processing
+
+```bash
+# Clean: deduplicate by page_id, normalize titles
+wikisourcescraper clean -i data/poems.jsonl.gz -o data/poems.cleaned.jsonl.gz
+
+# Enrich: fill missing collection_page_id via API
+wikisourcescraper enrich -i data/poems.cleaned.jsonl.gz -o data/poems.enriched.jsonl.gz --lang fr
+
+# Analyze: print corpus statistics
+wikisourcescraper analyze data/poems.cleaned.jsonl.gz
+
+# Debug: extract poems with unidentified collections
+wikisourcescraper debug -i data/poems.enriched.jsonl.gz -o data/debug.unidentified.jsonl.gz
+```
 
 </details>
 
@@ -280,4 +289,4 @@ SQL Dumps ──────> NDJSON Files ───> In-Memory ─────�
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).

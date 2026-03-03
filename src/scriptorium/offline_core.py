@@ -162,7 +162,7 @@ class OfflineOrchestrator:
     def run(self):
         """Main execution method. Fully synchronous."""
         logger.info("=" * 60)
-        logger.info("OFFLINE MODE — Wikisource Poem Scraper v5.0.0")
+        logger.info("OFFLINE MODE — Scriptorium v5.0.3")
         logger.info("=" * 60)
         logger.info(f"Language: {self.lang}")
         logger.info(f"Root category: {self.category}")

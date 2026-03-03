@@ -1,4 +1,4 @@
 """
-Wikisource Poem Scraper Package.
+Scriptorium Package.
 """
-version = "5.0.1"
+version = "5.0.3"

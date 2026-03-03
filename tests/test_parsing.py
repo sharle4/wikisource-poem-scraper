@@ -1,6 +1,6 @@
 import pytest
 from bs4 import BeautifulSoup
-from src.poemscraper.parsing import PoemParser
+from src.scriptorium.parsing import PoemParser
 
 SAMPLE_WIKITEXT_SIMPLE = """
 Du texte avant.

@@ -8,7 +8,7 @@ Ce script traite un fichier de résultats `poems.jsonl.gz` pour :
 3. Supprimer les champs de métadonnées inutilisés.
 
 Utilisation:
-  python -m poemscraper clean --input <fichier_entree.jsonl.gz> --output <fichier_sortie.jsonl.gz>
+  python -m scriptorium clean --input <fichier_entree.jsonl.gz> --output <fichier_sortie.jsonl.gz>
 """
 from __future__ import annotations
 

@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wikisource_poem_scraper"
-version = "5.0.1"
+name = "scriptorium"
+version = "5.0.3"
 description = "Intelligent scraper for extracting poems from Wikisource, supporting both online API and offline dump processing modes."
 readme = "README.md"
 authors = [
@@ -45,7 +45,7 @@ dev = [
 ]
 
 [project.scripts]
-poemscraper = "poemscraper.cli:main_cli"
+scriptorium = "scriptorium.cli:main_cli"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

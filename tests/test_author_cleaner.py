@@ -1,5 +1,5 @@
 import pytest
-from src.poemscraper.author_cleaner import clean_author_name
+from src.scriptorium.author_cleaner import clean_author_name
 
 def test_clean_author_name_prefixes():
     assert clean_author_name("Auteur : André Theuriet") == "André Theuriet"

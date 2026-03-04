@@ -14,6 +14,7 @@ from .cleaner import main as cleaner_main
 from .results_analyzer import main as analyzer_main
 from .enricher import PoemEnricher
 from .debugger import main as debugger_main
+from .merger import CorpusMerger
 
 # --- Launch functions for each subcommand ---
 
@@ -95,6 +96,22 @@ def run_debugger(args: argparse.Namespace):
         logging.critical(f"A critical error occurred during debugging: {e}", exc_info=True)
         sys.exit(1)
 
+def run_merger(args: argparse.Namespace):
+    """Launches the corpus merge process to reconcile two JSONL files."""
+    try:
+        merger = CorpusMerger(
+            file_a=args.file_a,
+            file_b=args.file_b,
+            output=args.output,
+            strategy=args.strategy,
+        )
+        return_code = merger.run()
+        if return_code != 0:
+            sys.exit(return_code)
+    except Exception as e:
+        logging.critical(f"A critical error occurred during merge: {e}", exc_info=True)
+        sys.exit(1)
+
 def main_cli():
     """Main entry point of the command-line interface."""
     parser = argparse.ArgumentParser(
@@ -149,6 +166,17 @@ def main_cli():
     p_debug.add_argument("--input", "-i", type=Path, required=True, help="Input file to analyze (e.g., data/poems.enriched.jsonl.gz).")
     p_debug.add_argument("--output", "-o", type=Path, required=True, help="Output file for extracted poems (e.g., data/debug.unidentified.jsonl.gz).")
     p_debug.set_defaults(func=run_debugger)
+
+    # --- 'merge' command ---
+    p_merge = subparsers.add_parser("merge", help="Merge two JSONL files into a single deduplicated Golden Record.")
+    p_merge.add_argument("--file-a", type=Path, required=True, help="First input file (e.g., data/offline.jsonl.gz).")
+    p_merge.add_argument("--file-b", type=Path, required=True, help="Second input file (e.g., data/online.jsonl.gz).")
+    p_merge.add_argument("--output", "-o", type=Path, required=True, help="Merged output file (e.g., data/poems.merged.jsonl.gz).")
+    p_merge.add_argument(
+        "--strategy", type=str, choices=["keep_a", "keep_b", "keep_richest"], default="keep_richest",
+        help="Conflict resolution strategy when a page_id exists in both files (default: keep_richest)."
+    )
+    p_merge.set_defaults(func=run_merger)
 
     # Optional global variables for bot authentication
     parser.add_argument("--bot-user", type=str, default=os.getenv("WIKISOURCE_BOT_USERNAME"), help="Bot username (or WIKISOURCE_BOT_USERNAME environment variable)")

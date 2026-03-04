@@ -10,7 +10,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "Scriptorium/5.0.4 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
+    "Scriptorium/5.1.0 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 

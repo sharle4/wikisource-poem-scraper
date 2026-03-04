@@ -28,6 +28,7 @@ Two modes cover different needs. **Online mode** queries the MediaWiki API and f
 - 🔁 **Resumable** — SQLite index tracks progress; interrupted runs pick up where they left off
 - 🤖 **Bot authentication** — higher API rate limits via Wikisource bot account
 - 🧹 **Post-processing** — built-in deduplication, enrichment, and corpus analysis commands
+- 🏆 **Golden Record merging** — reconcile online and offline outputs into the ultimate corpus, keeping the richest version of every poem automatically
 
 ## 🚀 Quickstart
 
@@ -225,6 +226,22 @@ SQL Dumps ──────> NDJSON Files ───> In-Memory ─────�
 
 **Phase 5 — Write:** Processes each poem through `PoemProcessor.process()` (same code as online mode). Output sorted by `page_id` for reproducibility.
 
+### Data reconciliation — the Golden Record
+
+The online and offline pipelines have complementary strengths and weaknesses. Neither dataset alone is the ground truth.
+
+The **`merger.py`** module reconciles two JSONL outputs into a single "Golden Record" corpus. It streams both files, deduplicates by `page_id`, and resolves conflicts using a configurable strategy. For the `keep_richest` strategy, it applies a **deterministic richness scoring algorithm** to each duplicate pair:
+
+| Signal | Points | Rationale |
+|---|---|---|
+| `collection_page_id` is present | **+50** | Being linked to a parent collection is the highest-value contextual data. |
+| `hub_page_id` ≠ `page_id` | **+30** | Proper grouping under a multi-version hub adds scholarly context. |
+| `section_title` is present | **+20** | Section placement within a collection aids reading-order reconstruction. |
+| Each non-empty metadata field | **+10** | One bonus per filled field among `author`, `publication_date`, `source_collection`, `publisher`, `translator`. |
+| Text length | **+1 per 100 chars** | Tie-breaker: longer `normalized_text` suggests a more complete extraction. |
+
+When scores are tied, the version from file A is kept. The merger logs a full summary — total records per file, duplicates found, conflict outcomes, and elapsed time — so you can audit every merge.
+
 </details>
 
 <details>
@@ -276,6 +293,31 @@ wikisourcescraper analyze data/poems.cleaned.jsonl.gz
 # Debug: extract poems with unidentified collections
 wikisourcescraper debug -i data/poems.enriched.jsonl.gz -o data/debug.unidentified.jsonl.gz
 ```
+
+### Merge: reconcile two datasets
+
+Combine an offline and an online corpus (or any two JSONL files) into a single deduplicated Golden Record:
+
+```bash
+wikisourcescraper merge \
+  --file-a data/offline_corpus.jsonl.gz \
+  --file-b data/online_corpus.jsonl.gz \
+  --output data/golden_record.jsonl.gz \
+  --strategy keep_richest
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--file-a` | *(required)* | First input file (`.jsonl` or `.jsonl.gz`) |
+| `--file-b` | *(required)* | Second input file (`.jsonl` or `.jsonl.gz`) |
+| `--output`, `-o` | *(required)* | Merged output file |
+| `--strategy` | `keep_richest` | Conflict resolution when a `page_id` exists in both files |
+
+**Strategies:**
+
+- **`keep_richest`** *(default)* — scores both versions of a duplicate poem and keeps the semantically richer one. Ties go to file A. Best for building the most complete corpus possible.
+- **`keep_a`** — always keeps file A's version on conflict. Useful when A is your trusted reference (e.g., a carefully curated offline dump).
+- **`keep_b`** — always keeps file B's version on conflict.
 
 </details>
 

@@ -16,8 +16,8 @@ collection_log = logging.getLogger('collection_processing')
 
 class PoemProcessor:
     """
-    Transforme les données brutes d'une page MediaWiki et le HTML rendu
-    en un objet PoemSchema validé et nettoyé.
+    Transforms raw MediaWiki page data and rendered HTML
+    into a validated and cleaned PoemSchema object.
     """
 
     def process(
@@ -32,10 +32,10 @@ class PoemProcessor:
         section_title_in_collection: Optional[str] = None,
         is_first_poem_in_collection: bool = False
     ) -> PoemSchema:
-        """Méthode de traitement principale pour une seule page."""
+        """Main processing method for a single page."""
         page_title = page_data.get("title", "N/A")
         page_id = page_data.get("pageid", -1)
-        
+
         if collection_context:
             collection_log.debug(f"PoemProcessor received context for '{page_title}' (id:{page_id}): collection='{collection_context.title}' (id:{collection_context.page_id})")
         else:
@@ -46,18 +46,18 @@ class PoemProcessor:
         structure = PoemParser.extract_poem_structure(soup)
         if not structure or not structure.stanzas:
             raise PoemParsingError(
-                "Aucune structure de poème trouvée dans le HTML ou contenu vide."
+                "No poem structure found in the HTML or content is empty."
             )
 
         html_meta = self._extract_html_metadata(soup)
         wikitext_meta = self._extract_wikitext_metadata(wikicode)
-        
+
         final_meta_dict = {**wikitext_meta, **html_meta}
 
         if not final_meta_dict.get("source_collection"):
             if "/" in page_data["title"]:
                 parent_title = page_data["title"].split("/")[0].strip()
-                if len(parent_title) < 70: 
+                if len(parent_title) < 70:
                     final_meta_dict["source_collection"] = parent_title
 
         metadata_obj = PoemMetadata(**final_meta_dict)
@@ -101,7 +101,7 @@ class PoemProcessor:
         return poem_obj
 
     def _extract_html_metadata(self, soup: BeautifulSoup) -> dict:
-        """Extrait les métadonnées structurées (itemprop) du HTML rendu."""
+        """Extracts structured metadata (itemprop) from the rendered HTML."""
         metadata = {}
         itemprop_map = {
             "author": "author",
@@ -125,19 +125,19 @@ class PoemProcessor:
                         value = name_span.get_text(strip=True)
                     else:
                         value = link_tag.get_text(strip=True)
-        
+
             if not value:
                 value = element.get_text(strip=True) or element.get("content", "").strip()
 
             if value:
                 metadata[key] = clean_author_name(value) if key == "author" else value
-                
+
         return metadata
 
     def _extract_wikitext_metadata(
         self, parsed_wikicode: mwparserfromhell.wikicode.Wikicode
     ) -> dict:
-        """Extrait des métadonnées de secours depuis les templates du wikitext."""
+        """Extracts fallback metadata from wikitext templates."""
         metadata = {}
         for template in parsed_wikicode.filter_templates():
             name = template.name.strip().lower()

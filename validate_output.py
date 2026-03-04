@@ -10,67 +10,67 @@ logger = logging.getLogger(__name__)
 
 def validate_ndjson_file(filepath: str):
     """
-    Valide un fichier .jsonl.gz en utilisant le schéma Pydantic PoemSchema.
+    Validates a .jsonl.gz file using the PoemSchema Pydantic schema.
     """
-    logger.info(f"Début de la validation pour : {filepath}")
+    logger.info(f"Starting validation for: {filepath}")
     total_lines = 0
     valid_records = 0
     errors = 0
-    
+
     try:
         with gzip.open(filepath, 'rt', encoding='utf-8') as f:
             for line_number, line in enumerate(f, 1):
                 total_lines += 1
                 line_content = line.strip()
                 if not line_content:
-                    logger.warning(f"Ligne {line_number}: Ligne vide, ignorée.")
+                    logger.warning(f"Line {line_number}: Empty line, skipped.")
                     continue
 
                 try:
                     data = json.loads(line_content)
                     PoemSchema.model_validate(data)
                     valid_records += 1
-                
+
                 except json.JSONDecodeError as e:
-                    logger.error(f"Ligne {line_number}: Erreur de décodage JSON. Détails : {e}")
+                    logger.error(f"Line {line_number}: JSON decoding error. Details: {e}")
                     errors += 1
                 except ValidationError as e:
-                    logger.error(f"Ligne {line_number}: Échec de validation du schéma.")
-                    logger.error(f"  Titre : {data.get('title', 'N/A')}, PageID: {data.get('page_id', 'N/A')}")
+                    logger.error(f"Line {line_number}: Schema validation failed.")
+                    logger.error(f"  Title: {data.get('title', 'N/A')}, PageID: {data.get('page_id', 'N/A')}")
                     for error in e.errors():
-                        logger.error(f"    Champ: {'.'.join(map(str, error['loc']))}, Erreur: {error['msg']}")
+                        logger.error(f"    Field: {'.'.join(map(str, error['loc']))}, Error: {error['msg']}")
                     errors += 1
                 except Exception as e:
-                    logger.critical(f"Ligne {line_number}: Erreur inattendue : {e}")
+                    logger.critical(f"Line {line_number}: Unexpected error: {e}")
                     errors += 1
 
     except FileNotFoundError:
-        logger.critical(f"Erreur : Le fichier '{filepath}' n'a pas été trouvé.")
+        logger.critical(f"Error: File '{filepath}' not found.")
         sys.exit(1)
     except Exception as e:
-        logger.critical(f"Impossible d'ouvrir ou de lire le fichier : {e}")
+        logger.critical(f"Unable to open or read the file: {e}")
         sys.exit(1)
 
-    logger.info("---------- Validation Terminée ----------")
-    logger.info(f"Lignes totales traitées   : {total_lines}")
-    logger.info(f"Enregistrements valides : {valid_records}")
-    logger.info(f"Erreurs rencontrées     : {errors}")
+    logger.info("---------- Validation Complete ----------")
+    logger.info(f"Total lines processed    : {total_lines}")
+    logger.info(f"Valid records            : {valid_records}")
+    logger.info(f"Errors encountered       : {errors}")
     logger.info("---------------------------------------")
 
     if errors > 0:
-        logger.error("Le fichier contient des erreurs de validation.")
+        logger.error("The file contains validation errors.")
         sys.exit(1)
     elif total_lines == 0:
-         logger.warning("Le fichier est vide.")
+         logger.warning("The file is empty.")
          sys.exit(0)
     else:
-        logger.info("Succès : Tous les enregistrements sont conformes au schéma PoemSchema.")
+        logger.info("Success: All records conform to the PoemSchema.")
         sys.exit(0)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print(f"Usage: python {sys.argv[0]} <chemin_vers_poems.jsonl.gz>")
+        print(f"Usage: python {sys.argv[0]} <path_to_poems.jsonl.gz>")
         sys.exit(1)
-        
+
     file_to_validate = sys.argv[1]
     validate_ndjson_file(file_to_validate)

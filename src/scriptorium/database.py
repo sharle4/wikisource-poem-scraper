@@ -11,21 +11,21 @@ logger = logging.getLogger(__name__)
 
 
 def connect_sync_db(db_path: Path) -> tuple[sqlite3.Connection, sqlite3.Cursor]:
-    """Crée une connexion SQLite synchrone standard pour le thread d'écriture."""
+    """Creates a standard synchronous SQLite connection for the writer thread."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     return conn, cursor
 
 
 class DatabaseManager:
-    """Gère l'accès asynchrone et synchrone à la base de données d'index SQLite."""
+    """Manages asynchronous and synchronous access to the SQLite index database."""
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.conn: Optional[aiosqlite.Connection] = None
 
     async def initialize(self):
-        """Initialise la connexion asynchrone et crée/met à jour la table."""
+        """Initializes the asynchronous connection and creates/updates the table."""
         try:
             self.conn = await aiosqlite.connect(self.db_path)
             await self.conn.execute(
@@ -38,7 +38,7 @@ class DatabaseManager:
                     language TEXT NOT NULL,
                     checksum_sha256 TEXT NOT NULL,
                     extraction_timestamp TEXT NOT NULL,
-                    
+
                     collection_page_id INTEGER,
                     collection_title TEXT,
                     section_title TEXT,
@@ -56,7 +56,7 @@ class DatabaseManager:
             raise
 
     async def get_all_processed_ids(self) -> Set[int]:
-        """Récupère de manière asynchrone tous les page_ids déjà dans la base de données."""
+        """Asynchronously retrieves all page_ids already in the database."""
         if not self.conn:
             await self.initialize()
 
@@ -67,14 +67,14 @@ class DatabaseManager:
 
     def add_poem_index_sync(self, poem: PoemSchema, cursor: sqlite3.Cursor):
         """
-        Insère ou REMPLACE de manière synchrone l'index d'un poème.
-        Le remplacement est crucial pour que la version avec contexte (traitée plus tard)
-        puisse écraser une version sans contexte (traitée plus tôt à cause de la race condition).
+        Synchronously inserts or replaces a poem's index.
+        The replacement is needed so that the version with context (processed later)
+        can overwrite a version without context (processed earlier due to race conditions).
         """
         cursor.execute(
             """
             INSERT OR REPLACE INTO poems (
-                page_id, title, author, publication_date, language, 
+                page_id, title, author, publication_date, language,
                 checksum_sha256, extraction_timestamp,
                 collection_page_id, collection_title, section_title, poem_order,
                 hub_title, hub_page_id
@@ -137,7 +137,7 @@ class DatabaseManager:
         return ids
 
     async def close(self):
-        """Ferme la connexion asynchrone à la base de données."""
+        """Closes the asynchronous database connection."""
         if self.conn:
             await self.conn.close()
             logger.info("Database connection closed.")

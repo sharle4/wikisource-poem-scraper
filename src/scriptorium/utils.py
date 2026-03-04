@@ -8,22 +8,22 @@ from pathlib import Path
 from typing import Iterator, Dict, Any
 
 def is_gz(path: Path) -> bool:
-    """Vérifie si un fichier est compressé avec Gzip."""
+    """Checks if a file is Gzip-compressed."""
     return path.suffix == ".gz" or path.name.endswith(".jsonl.gz")
 
 def open_maybe_gzip(path: Path, mode: str):
-    """Ouvre un fichier, en gérant la décompression Gzip de manière transparente."""
+    """Opens a file, handling Gzip decompression."""
     if "b" in mode:
         return gzip.open(path, mode) if is_gz(path) else open(path, mode)
-    
+
     if is_gz(path):
         gz_file = gzip.open(path, mode.replace("t", "") + "b")
         return io.TextIOWrapper(gz_file, encoding="utf-8")
-    
+
     return open(path, mode, encoding="utf-8")
 
 def iter_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
-    """Itère sur les lignes d'un fichier JSONL, en gérant les erreurs de parsing."""
+    """Iterates over lines of a JSONL file."""
     with open_maybe_gzip(path, "rt") as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
@@ -32,5 +32,5 @@ def iter_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
             try:
                 yield json.loads(line)
             except json.JSONDecodeError:
-                print(f"[AVERTISSEMENT] Ligne {line_num} ignorée: impossible de décoder le JSON.", file=sys.stderr)
+                print(f"[WARNING] Line {line_num} skipped: unable to decode JSON.", file=sys.stderr)
                 continue

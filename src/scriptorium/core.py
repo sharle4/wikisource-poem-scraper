@@ -28,7 +28,7 @@ collection_log.propagate = False
 logger = logging.getLogger(__name__)
 
 class ScraperOrchestrator:
-    """Orchestre le workflow de scraping intelligent et hiérarchique."""
+    """Orchestrates the hierarchical scraping workflow."""
 
     def __init__(self, config, log_manager: LogManager, bot_username: Optional[str] = None, bot_password: Optional[str] = None):
         self.config = config
@@ -42,7 +42,7 @@ class ScraperOrchestrator:
         self.output_file = self.config.output_dir / "poems.jsonl.gz"
         self.cleaned_output_file = self.config.output_dir / "poems.cleaned.jsonl.gz"
         self.db_path = self.config.output_dir / "poems_index.sqlite"
-        
+
         if not collection_log.hasHandlers():
             collection_log_path = self.config.output_dir / "logs" / "collection_processing.log"
             collection_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -53,12 +53,12 @@ class ScraperOrchestrator:
             handler.setFormatter(formatter)
             collection_log.addHandler(handler)
             collection_log.setLevel(logging.DEBUG)
-            collection_log.info("Logger de traitement des recueils initialisé.")
+            collection_log.info("Collection processing logger initialized.")
 
 
         self.db_manager = DatabaseManager(self.db_path)
         self.processor = PoemProcessor()
-        
+
         self.tree_logger: Optional[HierarchicalLogger] = None
         if self.config.tree_log:
             tree_log_dir = self.config.output_dir / "logs" / "tree-logs"
@@ -75,12 +75,12 @@ class ScraperOrchestrator:
         self._net_timeout_seconds = 25
         self._net_retries = 2
         self._backoff_base = 0.5
-        
+
     async def run(self):
-        """Méthode d'exécution principale avec gestion propre de l'arrêt."""
+        """Main execution method with graceful shutdown handling."""
         logger.info(f"Starting intelligent scraper for '{self.config.lang}.wikisource.org'")
         logger.info(f"Root category: '{self.config.category}'")
-        
+
         await self.db_manager.initialize()
 
         if self.config.resume:
@@ -90,7 +90,7 @@ class ScraperOrchestrator:
                 async with self.db_manager.conn.execute("SELECT page_id FROM poems WHERE collection_page_id IS NOT NULL") as cursor:
                     rows = await cursor.fetchall()
                     self.ids_with_collection_context.update(row[0] for row in rows)
-            
+
             logger.info(f"Resume mode: Loaded {len(self.processed_ids)} already processed page IDs.")
             logger.info(f"Resume mode: Found {len(self.ids_with_collection_context)} poems already linked to a collection.")
 
@@ -122,16 +122,16 @@ class ScraperOrchestrator:
 
         finally:
             logger.info("Shutdown sequence initiated. Finalizing operations...")
-            
+
             writer_sync_queue.put(None)
             writer_thread.join()
             logger.info("Writer thread finished processing remaining items.")
-            
+
             if self.tree_logger:
                 self.tree_logger.write_log_files()
-            
+
             await self.db_manager.close()
-            
+
             logger.info("Scraping finished.")
             logger.info(f"Total poems processed and saved: {self.processed_counter}")
             logger.info(
@@ -140,8 +140,8 @@ class ScraperOrchestrator:
 
     async def _schedule_page_if_new(self, queue: asyncio.Queue, page_item: Dict[str, Any]) -> bool:
         """
-        Met intelligemment une page en file d'attente pour éviter les boucles et
-        permettre une mise à jour contextuelle unique.
+        Intelligently enqueues a page to prevent loops and
+        allow a single contextual update.
         """
         page_id = page_item['page_info']['pageid']
         has_new_context = "collection_context" in page_item and page_item["collection_context"] is not None
@@ -160,17 +160,17 @@ class ScraperOrchestrator:
             collection_log.info(f"Re-scheduling page '{page_item['page_info'].get('title', 'N/A')}' (id:{page_id}) to add collection context.")
             await queue.put(page_item)
             return True
-        
+
         logger.debug(f"Skipping enqueue for already processed page ID {page_id} (no new context or already updated).")
         return False
 
 
     async def _producer(self, client: WikiAPIClient, queue: asyncio.Queue):
-        """Trouve et met en file les pages initiales des catégories d'auteurs."""
+        """Discovers and enqueues initial pages from author categories."""
         logger.info(f"Normalizing root category title '{self.config.category}'...")
         cat_prefix = get_localized_category_prefix(self.config.lang)
         full_cat_title = f"{cat_prefix}:{self.config.category}"
-        
+
         page_info = await client.get_page_info_and_redirects([full_cat_title])
 
         if not page_info or not page_info.get("pages") or "missing" in page_info["pages"][0]:
@@ -183,7 +183,7 @@ class ScraperOrchestrator:
             full_cat_title = corrected_title
 
         logger.info(f"Phase 1: Discovering author subcategories in '{full_cat_title}'...")
-        
+
         author_cat_titles = [
             cat['title'].split(":", 1)[1]
             async for cat in client.get_subcategories_generator(full_cat_title.split(":", 1)[1], self.config.lang)
@@ -200,7 +200,7 @@ class ScraperOrchestrator:
                         non_empty_author_cats.append(title.split(":", 1)[1])
 
         logger.info(f"Found {len(non_empty_author_cats)} non-empty author categories. Discovering pages...")
-        
+
         enqueued_count = 0
         if non_empty_author_cats:
             with tqdm(total=len(non_empty_author_cats), desc="Discovering pages", unit=" author_cat") as pbar:
@@ -208,7 +208,7 @@ class ScraperOrchestrator:
                     author_cat_full_title = f"{cat_prefix}:{author_cat}"
                     async for page in client.get_pages_in_category_generator(author_cat, self.config.lang):
                         if self.config.limit and enqueued_count >= self.config.limit: break
-                        
+
                         page_item = {
                             'page_info': page,
                             'parent_title': author_cat_full_title,
@@ -219,7 +219,7 @@ class ScraperOrchestrator:
 
                     pbar.update(1)
                     if self.config.limit and enqueued_count >= self.config.limit: break
-        
+
         logger.info(f"Producer finished. Enqueued {enqueued_count} initial pages for processing.")
 
     async def _consumer(
@@ -229,7 +229,7 @@ class ScraperOrchestrator:
         writer_queue: queue.Queue,
         pbar: tqdm,
     ):
-        """Consomme les pages de la file, les classifie et délègue le traitement."""
+        """Consumes pages from the queue, classifies them, and delegates processing."""
         while True:
             try:
                 queue_item = await page_queue.get()
@@ -242,23 +242,23 @@ class ScraperOrchestrator:
     async def _process_single_page(
         self, client: WikiAPIClient, page_queue: asyncio.Queue, writer_queue: queue.Queue, pbar: tqdm, queue_item: Dict[str, Any]
     ):
-        """Logique de traitement pour une seule page, extraite pour être réutilisable."""
+        """Processing logic for a single page, extracted for reusability."""
         page_info = queue_item['page_info']
         parent_title = queue_item['parent_title']
         author_cat = queue_item['author_cat']
         hub_info = queue_item.get("hub_info")
-        
+
         collection_context = queue_item.get("collection_context")
         order_in_collection = queue_item.get("order_in_collection")
         section_title_in_collection = queue_item.get("section_title_in_collection")
         is_first_poem_in_collection = queue_item.get("is_first_poem_in_collection", False)
-        
+
         page_id = page_info["pageid"]
         page_title = page_info.get('title', 'N/A')
 
         collection_log.debug(f"PROCESSING page '{page_title}' (id:{page_id}). Context received: {json.dumps({k: v if not isinstance(v, Collection) else v.model_dump(exclude={'content'}) for k, v in queue_item.items() if k != 'page_info'}, default=str)}")
 
-        
+
         try:
             page_data = await self._retry_call(
                 lambda: client.get_resolved_page_data(page_id=page_id),
@@ -269,7 +269,7 @@ class ScraperOrchestrator:
                 raise PageProcessingError(f"API call for page ID {page_id} returned no data.")
 
             final_page_id = page_data["pageid"]
-            
+
             is_redirect = final_page_id != page_id
             if is_redirect and final_page_id in self.ids_with_collection_context:
                 self.processed_ids.add(page_id)
@@ -291,10 +291,10 @@ class ScraperOrchestrator:
             wikitext = page_data.get("revisions", [{}])[0].get("content", "")
             wikicode = mwparserfromhell.parse(wikitext)
             page_url = page_data.get("fullurl", f"https://{self.config.lang}.wikisource.org/wiki/{page_title.replace(' ', '_')}")
-            
+
             classifier = PageClassifier(page_data, soup, self.config.lang, wikicode)
             page_type, classification_reason = classifier.classify()
-            
+
             collection_log.info(f"CLASSIFIED page '{page_title}' (id:{final_page_id}) as {page_type.name}. Reason: {classification_reason}")
 
             if self.tree_logger:
@@ -313,17 +313,17 @@ class ScraperOrchestrator:
                         self.ids_with_collection_context.add(poem_data.page_id)
                         if is_redirect:
                             self.ids_with_collection_context.add(page_id)
-                            
+
                     elif poem_data.collection_title:
                         logger.debug(f"Poem '{page_title}' has collection title '{poem_data.collection_title}' but no ID. Attempting upward inference.")
                         collection_log.info(f"INFERENCE: Poem '{page_title}' (id:{final_page_id}) has title '{poem_data.collection_title}' but no context. Searching for collection page.")
-                        
+
                         found_collection_title = await client.search_for_page(poem_data.collection_title, namespace=0)
-                        
+
                         if found_collection_title:
                             collection_log.info(f"Inference SUCCESS: Found page '{found_collection_title}' for title '{poem_data.collection_title}'.")
                             collection_page_data_query = await client.get_page_info_and_redirects([found_collection_title])
-                            
+
                             if collection_page_data_query and collection_page_data_query.get("pages"):
                                 collection_page_info = next((p for p in collection_page_data_query["pages"] if "missing" not in p), None)
                                 if collection_page_info:
@@ -343,7 +343,7 @@ class ScraperOrchestrator:
                 except PoemParsingError as e:
                     logger.warning(f"Page '{page_title}' looked like a poem but failed parsing: {e}")
                     self.skipped_counter += 1
-            
+
             elif page_type == PageType.POETIC_COLLECTION:
                 await self._process_collection(client, page_queue, pbar, {
                     'page_data': page_data, 'soup': soup, 'author_cat': author_cat, 'hub_info': hub_info,
@@ -359,7 +359,7 @@ class ScraperOrchestrator:
                     new_hub_info = {"title": page_title, "page_id": final_page_id}
                     await self._enqueue_new_titles(client, page_queue, pbar, list(sub_titles), current_parent_title=page_title, author_cat=author_cat, hub_info=new_hub_info)
                 self.skipped_counter += 1
-            
+
             else:
                 logger.debug(f"Skipping page '{page_title}' classified as {page_type.name} ({classification_reason}).")
                 self.log_manager.log_other(timestamp.isoformat(), page_title, page_url, parent_title, classification_reason)
@@ -380,7 +380,7 @@ class ScraperOrchestrator:
         self, client: WikiAPIClient, page_queue: asyncio.Queue, pbar: tqdm, context: Dict[str, Any]
     ):
         """
-        Orchestre le traitement d'une page de recueil.
+        Orchestrates the processing of a collection page.
         """
         page_data = context['page_data']
         page_id = page_data['pageid']
@@ -390,12 +390,12 @@ class ScraperOrchestrator:
         soup = context['soup']
 
         collection_log.info(f"--- Starting processing for POETIC_COLLECTION: '{page_title}' (id:{page_id}) ---")
-        
+
         try:
             classifier = PageClassifier(page_data, soup, self.config.lang, mwparserfromhell.parse(""))
             ordered_links = classifier.extract_ordered_collection_links()
             collection_log.info(f"Found {len(ordered_links)} ordered items (poems/sections) in '{page_title}'.")
-            
+
             if not ordered_links:
                 logger.warning(f"Collection '{page_title}' did not yield any ordered links.")
                 collection_log.warning(f"Extraction from '{page_title}' yielded no links. Aborting processing for this collection.")
@@ -408,14 +408,14 @@ class ScraperOrchestrator:
                 url=page_url,
                 author=author_cat.split(':')[-1]
             )
-            
+
             poem_titles_to_resolve = [title for title, type in ordered_links if type == PageType.POEM]
             collection_log.debug(f"Resolving {len(poem_titles_to_resolve)} poem titles: {poem_titles_to_resolve}")
             resolved_pages = await self._resolve_titles_to_pages(client, poem_titles_to_resolve)
             collection_log.info(f"Successfully resolved {len(resolved_pages)} out of {len(poem_titles_to_resolve)} titles.")
-            
+
             self.log_manager.log_collection(
-                datetime.now(timezone.utc).isoformat(), page_title, page_url, 
+                datetime.now(timezone.utc).isoformat(), page_title, page_url,
                 context.get('parent_title'), "is_poetic_collection", len(resolved_pages)
             )
 
@@ -428,21 +428,21 @@ class ScraperOrchestrator:
                     collection_log.debug(f"Identified SECTION: '{title}' in '{page_title}'.")
                     current_section_obj = Section(title=title)
                     collection_obj.content.append(current_section_obj)
-                
+
                 elif item_type == PageType.POEM:
                     if title in resolved_pages:
                         page_info = resolved_pages[title]
                         import urllib.parse
                         encoded_title = urllib.parse.quote(title.replace(" ", "_"))
                         poem_info = PoemInfo(title=title, page_id=page_info['pageid'], url=page_info.get("fullurl", f"https://{self.config.lang}.wikisource.org/wiki/{encoded_title}"))
-                        
+
                         if current_section_obj:
                             current_section_obj.poems.append(poem_info)
                         else:
                             collection_obj.content.append(poem_info)
-                        
+
                         section_title_for_poem = current_section_obj.title if current_section_obj else None
-                        
+
                         queue_payload = {
                             'page_info': page_info,
                             'parent_title': page_title,
@@ -453,9 +453,9 @@ class ScraperOrchestrator:
                             'section_title_in_collection': section_title_for_poem,
                             'is_first_poem_in_collection': is_first_poem_processed
                         }
-                        
+
                         collection_log.debug(f"QUEUING poem '{title}' (order:{poem_counter_in_collection}) from section '{section_title_for_poem}' with full collection context.")
-                        
+
                         if await self._schedule_page_if_new(page_queue, queue_payload):
                             poem_counter_in_collection += 1
                             is_first_poem_processed = False
@@ -464,19 +464,19 @@ class ScraperOrchestrator:
 
                     else:
                         collection_log.warning(f"Could not resolve title '{title}' from collection '{page_title}'. It will be skipped.")
-            
+
             collection_log.info(f"--- Finished processing for POETIC_COLLECTION: '{page_title}'. Processed {poem_counter_in_collection} poems. ---")
-        
+
         except Exception as e:
             collection_log.error(f"CRITICAL FAILURE during _process_collection for '{page_title}': {e}", exc_info=True)
 
 
     async def _resolve_titles_to_pages(self, client: WikiAPIClient, titles: List[str]) -> Dict[str, Dict]:
-        """Résout une liste de titres en objets page_info."""
+        """Resolves a list of titles into page_info objects."""
         resolved = {}
         if not titles:
             return resolved
-            
+
         for i in range(0, len(titles), 50):
             batch = titles[i:i+50]
             try:
@@ -484,9 +484,9 @@ class ScraperOrchestrator:
                 if not query_result or not query_result.get("pages"):
                     collection_log.warning(f"API call to resolve titles returned no pages for batch: {batch}")
                     continue
-                
+
                 redirect_map = {r['from']: r['to'] for r in query_result.get('redirects', [])}
-                
+
                 for p_info in query_result.get("pages", []):
                     if p_info.get("missing"):
                         collection_log.warning(f"Title '{p_info['title']}' is marked as missing by API.")
@@ -531,11 +531,11 @@ class ScraperOrchestrator:
         current_parent_title: str, author_cat: str, hub_info: Optional[dict] = None
     ):
         """
-        Met en file d'attente les enfants d'un hub.
+        Enqueues child pages from a hub.
         """
         logger.debug(f"Resolving {len(titles)} titles from hub '{current_parent_title}'.")
         resolved_pages = await self._resolve_titles_to_pages(client, titles)
-        
+
         enqueued_count = 0
         for title, page_info in resolved_pages.items():
             page_item = {
@@ -549,7 +549,7 @@ class ScraperOrchestrator:
         logger.debug(f"Enqueued {enqueued_count} new pages from hub '{current_parent_title}'.")
 
     def _sync_writer(self, writer_queue: queue.Queue):
-        """Tâche synchrone pour gérer toutes les E/S disque."""
+        """Synchronous task to handle all disk I/O."""
         db_conn, db_cursor = connect_sync_db(self.db_path)
         cleaned_fp = None
         seen_cleaned_page_ids: set[int] = set()
@@ -572,10 +572,10 @@ class ScraperOrchestrator:
                             page_id = result.page_id
                             if page_id not in seen_cleaned_page_ids:
                                 seen_cleaned_page_ids.add(page_id)
-                                
+
                                 poem_dict = result.model_dump(mode="json", exclude_none=True)
                                 cleaned_poem = process_poem(poem_dict)
-                                
+
                                 cleaned_fp.write(json.dumps(cleaned_poem, ensure_ascii=False) + "\n")
 
                         self.db_manager.add_poem_index_sync(result, db_cursor)
@@ -585,12 +585,12 @@ class ScraperOrchestrator:
                     logger.error(f"Writer thread failed to persist a record: {e}")
                 finally:
                     writer_queue.task_done()
-        
+
         if cleaned_fp is not None:
             try:
                 cleaned_fp.close()
             except Exception:
                 pass
-        
+
         db_conn.commit()
         db_conn.close()

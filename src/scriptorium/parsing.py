@@ -10,15 +10,14 @@ logger = logging.getLogger(__name__)
 
 class PoemParser:
     """
-    Analyse le HTML rendu (via un objet BeautifulSoup) pour extraire les structures de poèmes.
-    Cette approche est beaucoup plus fiable que l'analyse du wikitext pour les balises de présentation.
+    Parses rendered HTML (via a BeautifulSoup object) to extract poem structures.
     """
 
     @staticmethod
     def extract_poem_structure(soup: BeautifulSoup) -> Optional[PoemStructure]:
         """
-        Extrait les strophes et les vers du HTML en se basant sur les motifs courants de Wikisource
-        comme <div class="poem"> ou la balise <poem>.
+        Extracts stanzas and verses from HTML based on common Wikisource patterns
+        such as <div class="poem"> or the <poem> tag.
         """
         poem_blocks = soup.find_all(["div", "span"], class_="poem")
 
@@ -52,8 +51,8 @@ class PoemParser:
     @staticmethod
     def create_normalized_text(structure: PoemStructure) -> str:
         """
-        Crée un texte plat normalisé à partir de la structure extraite.
-        (Vers séparés par \n, Strophes séparées par \n\n)
+        Creates a flat normalized text from the extracted structure.
+        (Verses separated by \\n, stanzas separated by \\n\\n)
         """
         stanza_texts = ["\n".join(stanza) for stanza in structure.stanzas]
         return "\n\n".join(stanza_texts)

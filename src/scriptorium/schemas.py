@@ -4,14 +4,14 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 class PoemInfo(BaseModel):
-    """Représente un poème unique au sein d'un recueil."""
+    """Represents a single poem within a collection."""
     title: str
     page_id: int
     url: HttpUrl
 
 
 class Section(BaseModel):
-    """Représente une section titrée dans un recueil."""
+    """Represents a titled section within a collection."""
     title: str
     poems: List[PoemInfo] = Field(default_factory=list)
 
@@ -20,7 +20,7 @@ CollectionComponent = Union[Section, PoemInfo]
 
 
 class Collection(BaseModel):
-    """Modélise la structure complète d'un recueil de poèmes."""
+    """Models the complete structure of a poetry collection."""
     page_id: int
     title: str
     author: Optional[str] = None
@@ -29,96 +29,96 @@ class Collection(BaseModel):
 
 
 class PoemStructure(BaseModel):
-    """Structure normalisée du poème (strophes et vers)."""
+    """Normalized poem structure (stanzas and verses)."""
     stanzas: List[List[str]] = Field(
-        ..., description="Liste de strophes, contenant des listes de vers."
+        ..., description="List of stanzas, each containing a list of verses."
     )
     raw_markers: List[str] = Field(
         default_factory=list,
-        description="Marqueurs HTML bruts détectés pour les blocs de poèmes.",
+        description="Raw HTML markers detected for poem blocks.",
     )
 
 
 class PoemMetadata(BaseModel):
-    """Conteneur structuré pour toutes les métadonnées extraites."""
+    """Structured container for all extracted metadata."""
     author: Optional[str] = Field(
-        None, description="Auteur(s) principal(aux) du poème."
+        None, description="Primary author(s) of the poem."
     )
     publication_date: Optional[str] = Field(
-        None, description="Date de publication (souvent l'année)."
+        None, description="Publication date (often just the year)."
     )
     source_collection: Optional[str] = Field(
-        None, description="Nom du recueil ou de la publication d'origine."
+        None, description="Name of the original collection or publication."
     )
-    publisher: Optional[str] = Field(None, description="Maison d'édition.")
-    translator: Optional[str] = Field(None, description="Traducteur, si applicable.")
+    publisher: Optional[str] = Field(None, description="Publishing house.")
+    translator: Optional[str] = Field(None, description="Translator, if applicable.")
 
 
 class PoemSchema(BaseModel):
     """
-    Schéma JSON complet et validé pour un poème unique, maintenant enrichi
-    avec les informations structurelles du recueil.
+    Complete and validated JSON schema for a single poem, enriched
+    with structural information from the parent collection.
     """
     page_id: int = Field(
-        ..., description="Identifiant unique de la page MediaWiki (pageid)."
+        ..., description="Unique MediaWiki page identifier (pageid)."
     )
     revision_id: int = Field(
-        ..., description="Identifiant unique de la révision spécifique extraite (revid)."
+        ..., description="Unique identifier of the specific extracted revision (revid)."
     )
-    title: str = Field(..., description="Titre canonique de la page (poème).")
+    title: str = Field(..., description="Canonical page title (poem).")
     language: str = Field(
-        ..., description="Code langue du projet Wikisource (ex: 'fr')."
+        ..., description="Language code of the Wikisource project (e.g., 'fr')."
     )
     wikisource_url: HttpUrl = Field(
-        ..., description="URL canonique complète vers la page du poème."
+        ..., description="Full canonical URL to the poem page."
     )
 
     collection_page_id: Optional[int] = Field(
-        None, description="ID de la page du recueil parent."
+        None, description="Page ID of the parent collection."
     )
     collection_title: Optional[str] = Field(
-        None, description="Titre du recueil parent."
+        None, description="Title of the parent collection."
     )
     section_title: Optional[str] = Field(
-        None, description="Titre de la section du poème dans le recueil."
+        None, description="Title of the poem's section within the collection."
     )
     poem_order: Optional[int] = Field(
-        None, description="Position ordinale du poème dans le recueil (commence à 0)."
+        None, description="Ordinal position of the poem within the collection (0-indexed)."
     )
     hub_title: Optional[str] = Field(
-        None, description="Titre de la page 'hub' de versions multiples parente."
+        None, description="Title of the parent multi-version hub page."
     )
     hub_page_id: int = Field(
-        ..., description="ID unique du groupe de poèmes. C'est le page_id du hub parent, ou le page_id du poème lui-même s'il est autonome."
+        ..., description="Unique poem group ID. This is the page_id of the parent hub, or the poem's own page_id if standalone."
     )
 
-    metadata: PoemMetadata = Field(..., description="Toutes les métadonnées extraites.")
-    structure: PoemStructure = Field(..., description="Structure parsée du poème.")
+    metadata: PoemMetadata = Field(..., description="All extracted metadata.")
+    structure: PoemStructure = Field(..., description="Parsed poem structure.")
     collection_structure: Optional[Collection] = Field(
-        None, description="Objet complet décrivant la structure du recueil parent (présent uniquement pour le premier poème d'un recueil pour éviter la duplication massive de données)."
+        None, description="Complete object describing the parent collection structure (present only for the first poem in a collection to avoid massive data duplication)."
     )
     normalized_text: str = Field(
-        ..., description="Texte complet du poème, nettoyé et concaténé."
+        ..., description="Full poem text, cleaned and concatenated."
     )
     raw_wikitext: str = Field(
-        ..., description="Le contenu wikitext complet et brut de la révision."
+        ..., description="Complete raw wikitext content of the revision."
     )
 
     checksum_sha256: str = Field(
         ...,
-        description="SHA-256 du champ 'raw_wikitext' pour déduplication et intégrité.",
+        description="SHA-256 of the 'raw_wikitext' field for deduplication and integrity.",
     )
     extraction_timestamp: datetime.datetime = Field(
-        ..., description="Timestamp ISO 8601 (UTC) de l'extraction."
+        ..., description="ISO 8601 (UTC) timestamp of the extraction."
     )
     provenance: Literal["api", "dump"] = Field(
-        "api", description="Source de la donnée."
+        "api", description="Data source."
     )
 
     @field_validator("extraction_timestamp", mode="before")
     @classmethod
     def set_default_timestamp(cls, v):
-        """Assure que le timestamp est généré s'il n'est pas fourni."""
+        """Ensures the timestamp is generated if not provided."""
         if v is None:
             return datetime.datetime.now(datetime.timezone.utc)
         return v

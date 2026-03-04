@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def _sanitize_filename(name: str) -> str:
-    """Nettoie une chaîne pour en faire un nom de fichier valide."""
+    """Sanitizes a string to make it a valid filename."""
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
     name = name.replace(" ", "_").lower()
     return name
@@ -20,8 +20,8 @@ def _sanitize_filename(name: str) -> str:
 
 class HierarchicalLogger:
     """
-    Construit et écrit des journaux d'exploration en arborescence pour chaque auteur,
-    à la fois en format texte et en format JSON pour la visualisation.
+    Builds and writes tree-structured exploration logs for each author,
+    in both text and JSON formats for visualization.
     """
 
     def __init__(self, log_dir: Path):
@@ -31,7 +31,7 @@ class HierarchicalLogger:
         self._lock = Lock()
 
     def _find_node(self, tree: Dict, title: str) -> Dict | None:
-        """Trouve récursivement un nœud dans l'arbre par son titre."""
+        """Recursively finds a node in the tree by its title."""
         if tree.get("name") == title:
             return tree
         for child in tree.get("children", {}).values():
@@ -39,11 +39,11 @@ class HierarchicalLogger:
             if found:
                 return found
         return None
-    
+
     def add_node(
         self, author_cat: str, parent_title: str, page_title: str, page_type: PageType, reason: str, timestamp: datetime
     ):
-        """Ajoute une page (nœud) à l'arborescence de son auteur."""
+        """Adds a page (node) to its author's tree."""
         with self._lock:
             author_tree = self.trees.setdefault(
                 author_cat, {"name": author_cat, "children": {}}
@@ -53,7 +53,7 @@ class HierarchicalLogger:
 
             if not parent_node:
                 parent_node = author_tree
-            
+
             if "children" not in parent_node:
                 parent_node["children"] = {}
 
@@ -67,7 +67,7 @@ class HierarchicalLogger:
                 }
 
     def _count_descendants(self, node: Dict) -> int:
-        """Compte récursivement tous les descendants d'un nœud."""
+        """Recursively counts all descendants of a node."""
         children_collection = node.get("children", {})
         count = len(children_collection)
         for child in children_collection.values():
@@ -75,7 +75,7 @@ class HierarchicalLogger:
         return count
 
     def _convert_children_dict_to_list(self, node: Dict):
-        """Convertit récursivement les dictionnaires d'enfants en listes pour la sortie JSON."""
+        """Recursively converts children dictionaries to lists for JSON output."""
         if "children" in node and isinstance(node["children"], dict):
             node["children"] = list(node["children"].values())
             for child in node["children"]:
@@ -84,7 +84,7 @@ class HierarchicalLogger:
     def _write_tree_recursive_txt(
         self, file, node: Dict, prefix: str = "", is_last: bool = True
     ):
-        """Écrit récursivement l'arborescence au format texte."""
+        """Recursively writes the tree in text format."""
         connector = "└── " if is_last else "├── "
         timestamp = node.get('timestamp', '')
         full_type = f"{node.get('type', '')} ({node.get('reason', '')})"
@@ -96,18 +96,18 @@ class HierarchicalLogger:
             self._write_tree_recursive_txt(
                 file, child, prefix + child_prefix, i == len(children) - 1
             )
-            
+
     def write_log_files(self):
-        """Écrit tous les arbres construits dans leurs fichiers respectifs (TXT et JSON)."""
+        """Writes all built trees to their respective files (TXT and JSON)."""
         logger.info(f"Writing {len(self.trees)} exploration tree logs...")
         for author_cat, tree in self.trees.items():
             direct_children = len(tree.get("children", {}))
             total_descendants = self._count_descendants(tree)
 
             self._convert_children_dict_to_list(tree)
-            
+
             filename_base = _sanitize_filename(author_cat.split(":")[-1])
-            
+
             filepath_txt = self.log_dir / f"{filename_base}.txt"
             try:
                 with open(filepath_txt, "w", encoding="utf-8") as f:

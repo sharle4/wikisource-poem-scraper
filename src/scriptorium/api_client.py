@@ -10,7 +10,7 @@ import backoff
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "Scriptorium/5.0.3 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
+    "Scriptorium/5.0.4 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -26,7 +26,7 @@ def get_localized_category_prefix(lang: str) -> str:
 
 class WikiAPIClient:
     """
-    Client API MediaWiki asynchrone, respectueux des règles.
+    Asynchronous MediaWiki API client, compliant with usage policies.
     """
     def __init__(self, api_endpoint: str, max_concurrent_requests: int = 3, bot_username: Optional[str] = None, bot_password: Optional[str] = None):
         self.api_endpoint = api_endpoint
@@ -41,34 +41,34 @@ class WikiAPIClient:
     async def __aenter__(self):
         cookie_jar = aiohttp.CookieJar(unsafe=True)
         self.session = aiohttp.ClientSession(headers=self.headers, cookie_jar=cookie_jar)
-        
+
         if self.bot_username and self.bot_password:
             await self._login()
-            
+
         return self
 
     async def _login(self):
         """Authenticates with the MediaWiki API using a bot password."""
         logger.info(f"Attempting bot login for user: {self.bot_username}")
-        
-        # 1. Obtenir un token de connexion
+
+        # 1. Retrieve a login token
         token_params = {
             "action": "query",
             "meta": "tokens",
             "type": "login",
             "format": "json"
         }
-        
+
         async with self.session.get(self.api_endpoint, params=token_params) as resp:
             resp.raise_for_status()
             data = await resp.json()
             login_token = data.get("query", {}).get("tokens", {}).get("logintoken")
-            
+
         if not login_token:
             logger.error("Failed to retrieve login token.")
             return
 
-        # 2. Se connecter avec le token
+        # 2. Authenticate with the token
         login_params = {
             "action": "login",
             "lgname": self.bot_username,
@@ -76,11 +76,11 @@ class WikiAPIClient:
             "lgtoken": login_token,
             "format": "json"
         }
-        
+
         async with self.session.post(self.api_endpoint, data=login_params) as resp:
             resp.raise_for_status()
             data = await resp.json()
-            
+
             login_result = data.get("login", {}).get("result")
             if login_result == "Success":
                 logger.info("Bot login successful.")
@@ -125,7 +125,7 @@ class WikiAPIClient:
                 sanitized_params[key] = value
 
         sanitized_params.update({"format": "json", "formatversion": "2"})
-        
+
         async with self.semaphore:
             await self._throttle()
             logger.debug(f"API Request: {sanitized_params}")
@@ -137,9 +137,9 @@ class WikiAPIClient:
                         cookies = self.session.cookie_jar.filter_cookies(self.api_endpoint)
                         cookie_names = list(cookies.keys())
                         retry_after = response.headers.get("Retry-After")
-                        
+
                         logger.warning(f"Rate limited (429). Found cookies: {cookie_names}")
-                        
+
                         if retry_after:
                             try:
                                 wait_time = int(retry_after)
@@ -150,21 +150,21 @@ class WikiAPIClient:
                         else:
                             wait_time = 5
                             logger.warning(f"No Retry-After header provided, waiting {wait_time}s")
-                        
+
                         await asyncio.sleep(wait_time)
                         continue
 
                     if response.status == 403:
                         body = await response.text()
                         logger.error(f"403 Forbidden. Response body:\n{body}")
-                        
+
                     response.raise_for_status()
                     data = await response.json()
-                    
+
                     if elapsed > 1.0:
                         logger.warning(f"Action API request took {elapsed:.2f}s (>1s limit). Waiting 5 seconds to respect expensive endpoint policy.")
                         await asyncio.sleep(5)
-                        
+
                     if "error" in data: logger.error(f"MediaWiki API Error: {data['error']}")
                     return data
 
@@ -247,18 +247,18 @@ class WikiAPIClient:
                         return None
                     response.raise_for_status()
                     html_content = await response.text()
-                    
+
                     if elapsed > 1.0:
                         logger.warning(f"Live website request took {elapsed:.2f}s (>1s limit). Waiting 5 seconds...")
                         await asyncio.sleep(5)
-                        
+
                     return html_content
-    
+
     async def get_resolved_page_data(self, page_id: int) -> Optional[Dict[str, Any]]:
         """
-        Récupère les données définitives d'une page à partir de son ID, en résolvant automatiquement les redirections.
-        C'est la méthode privilégiée pour récupérer le contenu d'une page car elle utilise un seul appel API efficace.
-        Retourne l'objet de données de la page finale, ou None si la page est manquante ou invalide.
+        Retrieves the final page data from its ID, automatically resolving redirects.
+        This is the preferred method for fetching page content as it uses a single efficient API call.
+        Returns the final page data object, or None if the page is missing or invalid.
         """
         params = {
             "action": "query",
@@ -271,19 +271,19 @@ class WikiAPIClient:
         }
         try:
             data = await self._make_request(params)
-            
+
             if not data.get("query", {}).get("pages"):
                 return None
-            
+
             page_data = data["query"]["pages"][0]
             if page_data.get("missing") or "invalid" in page_data:
                 return None
-                
+
             return page_data
         except Exception as e:
             logger.error(f"Failed to resolve page data for id={page_id}: {e}")
             return None
-        
+
     async def get_page_data_by_id(self, page_id: int) -> Optional[Dict[str, Any]]:
         """Fetches raw wikitext, categories, and metadata for a page."""
         params = {
@@ -304,8 +304,8 @@ class WikiAPIClient:
         """Checks if a list of categories are empty."""
         cat_prefix = get_localized_category_prefix(lang)
         params = {
-            "action": "query", 
-            "prop": "categoryinfo", 
+            "action": "query",
+            "prop": "categoryinfo",
             "titles": "|".join([f"{cat_prefix}:{title}" for title in category_titles])
         }
         data = await self._make_request(params)

@@ -56,12 +56,6 @@ wikisourcescraper scrape --lang fr --category "Poèmes" --mode offline --dumps-d
 wikisourcescraper scrape --lang fr --category "Poèmes" --resume
 ```
 
-For development tools (pytest, black, mypy):
-
-```bash
-pip install -e ".[dev]"
-```
-
 ## 🔧 Setup & Credentials
 
 <details>

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scriptorium"
-version = "5.0.3"
+version = "5.0.4"
 description = "Intelligent scraper for extracting poems from Wikisource, supporting both online API and offline dump processing modes."
 readme = "README.md"
 authors = [

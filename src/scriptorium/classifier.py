@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class PageType(Enum):
-    """Énumération granulaire des types de pages pour une classification précise."""
+    """Granular enumeration of page types for precise classification."""
     POEM = auto()
     POETIC_COLLECTION = auto()
     MULTI_VERSION_HUB = auto()
@@ -24,7 +24,7 @@ class PageType(Enum):
 
 
 def get_localized_prefix(lang: str, prefix_type: str) -> str:
-    """Retourne le préfixe localisé."""
+    """Returns the localized prefix for a given language and type."""
     prefixes = {
         "fr": {"category": "Catégorie", "author": "Auteur"},
         "en": {"category": "Category", "author": "Author"},
@@ -34,7 +34,7 @@ def get_localized_prefix(lang: str, prefix_type: str) -> str:
 
 class PageClassifier:
     """
-    Analyse les données d'une page pour la classifier avec une logique experte.
+    Analyzes page data to classify it using expert logic.
     """
 
     def __init__(
@@ -61,8 +61,8 @@ class PageClassifier:
         ]
 
     def _get_page_signals(self) -> dict:
-        """Analyse la page une seule fois pour extraire des signaux booléens."""
-        
+        """Analyzes the page once to extract boolean signals."""
+
         is_recueil_cat = "Recueils de poèmes" in self.categories
         is_multiversion_cat = "Éditions multiples" in self.categories
 
@@ -84,19 +84,19 @@ class PageClassifier:
         }
 
     def classify(self) -> Tuple[PageType, str]:
-        """Détermine le type de page et la raison de la classification."""
+        """Determines the page type and the classification reason."""
         if self.ns != 0:
             reason = "is_author_page" if self.title.startswith(get_localized_prefix(self.lang, "author") + ":") else "is_other_namespace"
             page_type = PageType.AUTHOR if reason == "is_author_page" else PageType.OTHER
             return page_type, reason
-        
+
         signals = self._get_page_signals()
 
         if signals["is_recueil_cat"]:
             return PageType.POETIC_COLLECTION, "is_recueil_cat"
         if signals["is_multiversion_cat"]:
             return PageType.MULTI_VERSION_HUB, "is_multiversion_cat"
-        
+
         for key in ("has_ws_summary", "has_toc", "has_editions_header"):
             if signals[key]:
                 if signals["has_donnees_structurees"]:
@@ -108,15 +108,15 @@ class PageClassifier:
 
         if signals["has_donnees_structurees"] and self.soup.select("ul > li"):
             return PageType.MULTI_VERSION_HUB, "has_donnees_structurees and has_list_items"
-            
+
         return PageType.OTHER, "no_signals_matched"
 
     def extract_hub_sub_pages(self) -> Set[str]:
         """
-        Extrait les titres des sous-pages pour un MULTI_VERSION_HUB de manière exhaustive et fiable.
+        Extracts sub-page titles for a MULTI_VERSION_HUB exhaustively and reliably.
         """
         titles: Set[str] = set()
-        
+
         links = self.soup.select('a[href][title]')
 
         normalized_self_title = re.sub(r"\s*\([^)]*\)", "", self.title or "")
@@ -128,18 +128,18 @@ class PageClassifier:
 
             if not href.startswith("/wiki/"):
                 continue
-            
+
             if any(link_title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore) or \
                "action=edit" in href or "&redlink=1" in href:
                 continue
 
             is_a_version = False
-            
+
             normalized_link_title = re.sub(r"\s*\([^)]*\)", "", link_title or "")
             normalized_link_title = re.sub(r"\s+", " ", normalized_link_title).strip().lower()
             if normalized_self_title in normalized_link_title:
                 is_a_version = True
-            
+
             else:
                 try:
                     path = href.split("wiki/", 1)[1]
@@ -148,15 +148,15 @@ class PageClassifier:
                         is_a_version = True
                 except IndexError:
                     continue
-            
+
             if is_a_version:
                 titles.add(link_title)
-                
-        logger.info(f"Extrait {len(titles)} titres de version depuis la page hub '{self.title}'.")
+
+        logger.info(f"Extracted {len(titles)} version titles from hub page '{self.title}'.")
         return titles
 
     def _is_valid_poem_link(self, link: Tag) -> bool:
-        """Vérifie si un tag <a> est un lien plausible vers un poème."""
+        """Checks whether an <a> tag is a plausible link to a poem."""
         if not isinstance(link, Tag) or link.name != 'a':
             return False
         href = link.get('href', '')
@@ -177,15 +177,15 @@ class PageClassifier:
 
     def _is_section_title_element(self, element: Tag) -> bool:
         """
-        Détermine si un élément agit comme un titre de section.
-        Logique améliorée pour plus de précision.
+        Determines whether an element acts as a section title.
+        Improved logic for greater precision.
         """
         if not isinstance(element, Tag):
             return False
-        
+
         if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
             return True
-            
+
         if element.name == 'dt':
             return True
 
@@ -196,10 +196,10 @@ class PageClassifier:
         text = element.get_text(strip=True)
         if not text or len(text) <= 1 or len(text) > 150:
             return False
-        
+
         if element.find(['b', 'strong', 'i', 'em']):
             return True
-            
+
         if element.name in ['li', 'p'] and not has_valid_link:
             return True
 
@@ -207,18 +207,17 @@ class PageClassifier:
 
     def extract_ordered_collection_links(self) -> List[Tuple[str, PageType]]:
         """
-        MOTEUR DE PARSING STRUCTUREL EXPERT v2
-        Extrait les liens et titres de section en analysant la structure sémantique du document.
+        Extracts links and section titles by analyzing the document's semantic structure.
         """
         ordered_items: List[Tuple[str, PageType]] = []
         content_area = self.soup.select_one(".mw-parser-output")
 
         if not content_area:
-            logger.warning(f"Impossible de trouver la zone de contenu '.mw-parser-output' pour '{self.title}'.")
+            logger.warning(f"Could not find the content area '.mw-parser-output' for '{self.title}'.")
             return []
 
-        logger.debug(f"Début de l'analyse structurelle experte pour '{self.title}'.")
-        
+        logger.debug(f"Starting expert structural analysis for '{self.title}'.")
+
         candidate_elements = content_area.find_all(['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol', 'dl', 'div'])
 
         last_added_title = None
@@ -230,38 +229,38 @@ class PageClassifier:
             if self._is_section_title_element(element):
                 title_text = element.get_text(strip=True)
                 if title_text != last_added_title:
-                    logger.debug(f"Élément '{element.name}' identifié comme SECTION_TITLE: '{title_text}'")
+                    logger.debug(f"Element '{element.name}' identified as SECTION_TITLE: '{title_text}'")
                     ordered_items.append((title_text, PageType.SECTION_TITLE))
                     last_added_title = title_text
                 continue
 
             if element.name in ['ul', 'ol', 'dl']:
-                logger.debug(f"Analyse du conteneur de liste '{element.name}'.")
+                logger.debug(f"Analyzing list container '{element.name}'.")
                 list_item_tags = 'dd' if element.name == 'dl' else 'li'
                 for item in element.find_all(list_item_tags, recursive=False):
                     link = item.find(self._is_valid_poem_link)
                     if link and link.get('title'):
                         title = link['title']
                         if title != last_added_title:
-                            logger.debug(f"  Poème trouvé dans '{list_item_tags}': '{title}'")
+                            logger.debug(f"  Poem found in '{list_item_tags}': '{title}'")
                             ordered_items.append((title, PageType.POEM))
                             last_added_title = title
                     elif self._is_section_title_element(item):
                          title_text = item.get_text(strip=True)
                          if title_text != last_added_title:
-                            logger.debug(f"  Section trouvée dans '{list_item_tags}': '{title_text}'")
+                            logger.debug(f"  Section found in '{list_item_tags}': '{title_text}'")
                             ordered_items.append((title_text, PageType.SECTION_TITLE))
                             last_added_title = title_text
                 continue
-            
+
             link = element.find(self._is_valid_poem_link)
             if link and link.get('title'):
                 title = link['title']
                 if title != last_added_title:
-                    logger.debug(f"Poème trouvé dans un conteneur simple '{element.name}': '{title}'")
+                    logger.debug(f"Poem found in simple container '{element.name}': '{title}'")
                     ordered_items.append((title, PageType.POEM))
                     last_added_title = title
-        
+
         final_items = []
         seen_titles = set()
         for title, page_type in ordered_items:
@@ -269,5 +268,5 @@ class PageClassifier:
                 final_items.append((title, page_type))
                 seen_titles.add(title)
 
-        logger.info(f"Analyse structurelle terminée pour '{self.title}'. {len(final_items)} éléments uniques extraits.")
+        logger.info(f"Structural analysis complete for '{self.title}'. {len(final_items)} unique items extracted.")
         return final_items

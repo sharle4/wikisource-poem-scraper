@@ -1,15 +1,15 @@
 """
-Module d'enrichissement des données pour corriger les `collection_page_id` manquants.
+Data enrichment module to fix missing `collection_page_id` values.
 
-Ce script exécute un processus en trois étapes pour améliorer un fichier de données existant :
-1.  **Analyse et mise en cache** : Il lit une première fois le fichier d'entrée pour
-    construire un cache des correspondances `collection_title` -> `collection_page_id`
-    déjà connues et identifie tous les titres de recueils qui nécessitent une recherche d'ID.
-2.  **Récupération API** : Pour tous les titres sans ID, il interroge l'API MediaWiki
-    de manière asynchrone et massive pour trouver les `pageid` correspondants,
-    en gérant les redirections.
-3.  **Enrichissement et écriture** : Il relit le fichier d'entrée et écrit un nouveau
-    fichier de sortie, en ajoutant les `collection_page_id` qui ont été trouvés.
+This script runs a three-step process to improve an existing data file:
+1.  **Analysis and caching**: It reads the input file once to build a cache
+    of known `collection_title` -> `collection_page_id` mappings and identifies
+    all collection titles that need an ID lookup.
+2.  **API retrieval**: For all titles without an ID, it queries the MediaWiki API
+    asynchronously and at scale to find the corresponding `pageid` values,
+    handling redirects.
+3.  **Enrichment and writing**: It re-reads the input file and writes a new
+    output file, adding the `collection_page_id` values that were found.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class PoemEnricher:
-    """Orchestre le processus d'enrichissement des données de poèmes."""
+    """Orchestrates the poem data enrichment process."""
 
     def __init__(self, input_path: Path, output_path: Path, lang: str, workers: int, bot_username: str | None = None, bot_password: str | None = None):
         self.input_path = input_path
@@ -41,40 +41,40 @@ class PoemEnricher:
         self.bot_password = bot_password
 
     async def run(self):
-        """Exécute le workflow complet d'enrichissement."""
-        logger.info(f"Début du processus d'enrichissement pour '{self.input_path}'.")
+        """Executes the complete enrichment workflow."""
+        logger.info(f"Starting enrichment process for '{self.input_path}'.")
 
         if not self.input_path.exists():
-            logger.critical(f"Le fichier d'entrée '{self.input_path}' est introuvable.")
+            logger.critical(f"Input file '{self.input_path}' not found.")
             return
 
-        # --- Étape 1: Construire le cache initial et identifier les titres manquants ---
+        # --- Step 1: Build the initial cache and identify missing titles ---
         titles_to_fetch = await self._build_initial_cache_and_identify_missing()
 
-        # --- Étape 2: Récupérer les IDs manquants via l'API ---
+        # --- Step 2: Retrieve missing IDs via the API ---
         if titles_to_fetch:
-            logger.info(f"Récupération de {len(titles_to_fetch)} IDs de recueils manquants via l'API...")
+            logger.info(f"Fetching {len(titles_to_fetch)} missing collection IDs via the API...")
             async with WikiAPIClient(self.api_endpoint, self.workers, self.bot_username, self.bot_password) as client:
                 await self._fetch_missing_ids_from_api(client, list(titles_to_fetch))
         else:
-            logger.info("Aucun ID de recueil manquant à récupérer. Le cache est complet.")
+            logger.info("No missing collection IDs to fetch. Cache is complete.")
 
-        # --- Étape 3: Enrichir le fichier d'origine et écrire le nouveau ---
+        # --- Step 3: Enrich the original file and write the new one ---
         await self._enrich_and_write_file()
 
-        logger.info(f"Processus terminé. Fichier enrichi sauvegardé dans '{self.output_path}'.")
+        logger.info(f"Process complete. Enriched file saved to '{self.output_path}'.")
 
     async def _build_initial_cache_and_identify_missing(self) -> Set[str]:
         """
-        Lit le fichier une fois pour créer un cache des IDs connus et lister les titres à chercher.
-        Ceci est une optimisation pour éviter des appels API inutiles.
+        Reads the file once to create a cache of known IDs and list the titles to look up.
+        This is an optimization to avoid unnecessary API calls.
         """
-        logger.info("Phase 1: Analyse du fichier pour construire le cache initial...")
+        logger.info("Phase 1: Analyzing file to build initial cache...")
         titles_needing_id = set()
-        
+
         total_lines = sum(1 for _ in open_maybe_gzip(self.input_path, "rt"))
 
-        with tqdm(total=total_lines, desc="Analyse des poèmes", unit=" poème") as pbar:
+        with tqdm(total=total_lines, desc="Analyzing poems", unit=" poem") as pbar:
             for poem in iter_jsonl(self.input_path):
                 collection_title = poem.get("collection_title")
                 collection_id = poem.get("collection_page_id")
@@ -85,15 +85,15 @@ class PoemEnricher:
                     else:
                         titles_needing_id.add(collection_title)
                 pbar.update(1)
-        
+
         titles_to_fetch = titles_needing_id - set(self.title_to_id_cache.keys())
-        logger.info(f"Analyse terminée. {len(self.title_to_id_cache)} IDs trouvés dans le cache. "
-                    f"{len(titles_to_fetch)} IDs uniques à récupérer.")
+        logger.info(f"Analysis complete. {len(self.title_to_id_cache)} IDs found in cache. "
+                    f"{len(titles_to_fetch)} unique IDs to fetch.")
         return titles_to_fetch
 
     async def _fetch_missing_ids_from_api(self, client: WikiAPIClient, titles: List[str]):
         """
-        Interroge l'API MediaWiki par lots pour trouver les IDs des titres de recueils.
+        Queries the MediaWiki API in batches to find IDs for collection titles.
         """
         batch_size = 1
         tasks = []
@@ -102,7 +102,7 @@ class PoemEnricher:
             tasks.append(client.get_page_info_and_redirects(batch))
 
         found_count = 0
-        with tqdm(total=len(tasks), desc="Appels API", unit=" lot") as pbar:
+        with tqdm(total=len(tasks), desc="API calls", unit=" batch") as pbar:
             for future in asyncio.as_completed(tasks):
                 try:
                     query_result = await future
@@ -110,13 +110,13 @@ class PoemEnricher:
                         self._process_api_result(query_result)
                         found_count += len(query_result.get("pages", []))
                 except Exception as e:
-                    logger.error(f"Un lot d'appels API a échoué : {e}", exc_info=True)
+                    logger.error(f"An API batch call failed: {e}", exc_info=True)
                 pbar.update(1)
-        
-        logger.info(f"{len(self.title_to_id_cache) - found_count} IDs ont été ajoutés au cache via l'API.")
+
+        logger.info(f"{len(self.title_to_id_cache) - found_count} IDs were added to the cache via the API.")
 
     def _process_api_result(self, query_result: Dict[str, Any]):
-        """Traite le résultat d'un appel API pour mettre à jour le cache `title_to_id`."""
+        """Processes an API call result to update the `title_to_id` cache."""
         pages = {p['title']: p for p in query_result.get("pages", []) if "missing" not in p}
         redirects = {r['from']: r['to'] for r in query_result.get("redirects", [])}
 
@@ -124,27 +124,27 @@ class PoemEnricher:
             page_id = page_info.get("pageid")
             if page_id:
                 self.title_to_id_cache[title] = page_id
-        
+
         for from_title, to_title in redirects.items():
             if to_title in self.title_to_id_cache:
                 self.title_to_id_cache[from_title] = self.title_to_id_cache[to_title]
 
     async def _enrich_and_write_file(self):
-        """Lit le fichier d'entrée une seconde fois, enrichit les données et écrit le fichier de sortie."""
-        logger.info("Phase 2: Enrichissement et écriture du nouveau fichier...")
+        """Reads the input file a second time, enriches the data, and writes the output file."""
+        logger.info("Phase 2: Enriching and writing the new file...")
         enriched_count = 0
         total_lines = sum(1 for _ in open_maybe_gzip(self.input_path, "rt"))
 
         with open_maybe_gzip(self.output_path, "wt") as fout:
-            with tqdm(total=total_lines, desc="Écriture des poèmes", unit=" poème") as pbar:
+            with tqdm(total=total_lines, desc="Writing poems", unit=" poem") as pbar:
                 for poem in iter_jsonl(self.input_path):
                     if poem.get("collection_page_id") is None:
                         title = poem.get("collection_title")
                         if title and title in self.title_to_id_cache:
                             poem["collection_page_id"] = self.title_to_id_cache[title]
                             enriched_count += 1
-                    
+
                     fout.write(json.dumps(poem, ensure_ascii=False) + "\n")
                     pbar.update(1)
-        
-        logger.info(f"Écriture terminée. {enriched_count} poèmes ont été enrichis avec un `collection_page_id`.")
+
+        logger.info(f"Writing complete. {enriched_count} poems were enriched with a `collection_page_id`.")

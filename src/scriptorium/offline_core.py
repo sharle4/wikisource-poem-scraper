@@ -162,7 +162,7 @@ class OfflineOrchestrator:
     def run(self):
         """Main execution method. Fully synchronous."""
         logger.info("=" * 60)
-        logger.info("OFFLINE MODE — Scriptorium v5.1.0")
+        logger.info("OFFLINE MODE — Scriptorium v5.1.1")
         logger.info("=" * 60)
         logger.info(f"Language: {self.lang}")
         logger.info(f"Root category: {self.category}")

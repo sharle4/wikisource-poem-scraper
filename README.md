@@ -33,8 +33,8 @@ Two modes cover different needs. **Online mode** queries the MediaWiki API and f
 ## 🚀 Quickstart
 
 ```bash
-git clone https://github.com/sharle4/wikisource-poem-scraper.git
-cd wikisource-poem-scraper
+git clone https://github.com/sharle4/scriptorium.git
+cd scriptorium
 python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e .
 ```
@@ -42,19 +42,19 @@ pip install -e .
 **Online mode:**
 
 ```bash
-wikisourcescraper scrape --lang fr --category "Poèmes par Auteur" --workers 15
+scriptorium scrape --lang fr --category "Poèmes par Auteur" --workers 15
 ```
 
 **Offline mode:**
 
 ```bash
-wikisourcescraper scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --workers 8
+scriptorium scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --workers 8
 ```
 
 **Resume an interrupted run:**
 
 ```bash
-wikisourcescraper scrape --lang fr --category "Poèmes" --resume
+scriptorium scrape --lang fr --category "Poèmes" --resume
 ```
 
 ## 🔧 Setup & Credentials
@@ -247,19 +247,19 @@ When scores are tied, the version from file A is kept. The merger logs a full su
 <details>
 <summary><strong>📋 Full CLI Reference</strong></summary>
 
-After installation, the tool is available as `wikisourcescraper` or `python -m wikisource_scraper`.
+After installation, the tool is available as `scriptorium` or `python -m scriptorium`.
 
 ### Scraping
 
 ```bash
 # Online (default)
-wikisourcescraper scrape --lang fr --category "Poèmes par Auteur" --workers 15 --tree-log
+scriptorium scrape --lang fr --category "Poèmes par Auteur" --workers 15 --tree-log
 
 # Offline
-wikisourcescraper scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --workers 8
+scriptorium scrape --lang fr --category "Poèmes" --mode offline --dumps-dir ./dumps --workers 8
 
 # Resume an interrupted run (either mode)
-wikisourcescraper scrape --lang fr --category "Poèmes" --resume
+scriptorium scrape --lang fr --category "Poèmes" --resume
 ```
 
 ### Scrape options
@@ -282,16 +282,16 @@ wikisourcescraper scrape --lang fr --category "Poèmes" --resume
 
 ```bash
 # Clean: deduplicate by page_id, normalize titles
-wikisourcescraper clean -i data/poems.jsonl.gz -o data/poems.cleaned.jsonl.gz
+scriptorium clean -i data/poems.jsonl.gz -o data/poems.cleaned.jsonl.gz
 
 # Enrich: fill missing collection_page_id via API
-wikisourcescraper enrich -i data/poems.cleaned.jsonl.gz -o data/poems.enriched.jsonl.gz --lang fr
+scriptorium enrich -i data/poems.cleaned.jsonl.gz -o data/poems.enriched.jsonl.gz --lang fr
 
 # Analyze: print corpus statistics
-wikisourcescraper analyze data/poems.cleaned.jsonl.gz
+scriptorium analyze data/poems.cleaned.jsonl.gz
 
 # Debug: extract poems with unidentified collections
-wikisourcescraper debug -i data/poems.enriched.jsonl.gz -o data/debug.unidentified.jsonl.gz
+scriptorium debug -i data/poems.enriched.jsonl.gz -o data/debug.unidentified.jsonl.gz
 ```
 
 ### Merge: reconcile two datasets
@@ -299,7 +299,7 @@ wikisourcescraper debug -i data/poems.enriched.jsonl.gz -o data/debug.unidentifi
 Combine an offline and an online corpus (or any two JSONL files) into a single deduplicated Golden Record:
 
 ```bash
-wikisourcescraper merge \
+scriptorium merge \
   --file-a data/offline_corpus.jsonl.gz \
   --file-b data/online_corpus.jsonl.gz \
   --output data/golden_record.jsonl.gz \

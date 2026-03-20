@@ -1,4 +1,6 @@
+import copy
 import logging
+import re
 from typing import List, Optional
 
 from bs4 import BeautifulSoup
@@ -33,7 +35,27 @@ class PoemParser:
         for block in poem_blocks:
             raw_markers.append(str(block.prettify().splitlines()[0]).strip())
 
-            text_content = block.get_text(separator="\n", strip=True)
+            working_block = copy.copy(block)
+
+            for pagenum in working_block.find_all("span", class_="pagenum"):
+                pagenum.decompose()
+
+            for br in working_block.find_all("br"):
+                br.replace_with("\n")
+
+            for p in working_block.find_all("p"):
+                p.append("\n\n")
+
+            for div in working_block.find_all("div"):
+                div.append("\n")
+
+            text_content = working_block.get_text(separator="")
+
+            text_content = text_content.replace("\xa0", " ")
+
+            text_content = "\n".join(line.strip() for line in text_content.split("\n"))
+            
+            text_content = re.sub(r'\n{2,}', '\n\n', text_content)
 
             raw_stanzas = text_content.split("\n\n")
 
@@ -52,7 +74,7 @@ class PoemParser:
     def create_normalized_text(structure: PoemStructure) -> str:
         """
         Creates a flat normalized text from the extracted structure.
-        (Verses separated by \\n, stanzas separated by \\n\\n)
+        (Verses separated by \n, stanzas separated by \n\n)
         """
         stanza_texts = ["\n".join(stanza) for stanza in structure.stanzas]
         return "\n\n".join(stanza_texts)

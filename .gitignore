@@ -219,6 +219,7 @@ __marimo__/
 *.ndjson
 *.tar.gz
 *.sql
+*.gz
 *.json
 *.xml*
 

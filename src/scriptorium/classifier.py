@@ -111,23 +111,37 @@ class PageClassifier:
 
         return PageType.OTHER, "no_signals_matched"
 
+    def _get_normalized_title_from_href(self, href: str) -> str:
+        """Helper to cleanly extract decoded, space-separated title from href."""
+        if href.startswith("/wiki/"):
+            path = href[6:]
+        elif href.startswith("./"):
+            path = href[2:]
+        else:
+            return ""
+        
+        path = path.split("#", 1)[0]
+        return unquote(path).replace("_", " ")
+
     def extract_hub_sub_pages(self) -> Set[str]:
         """
         Extracts sub-page titles for a MULTI_VERSION_HUB exhaustively and reliably.
         """
         titles: Set[str] = set()
 
-        links = self.soup.select('a[href][title]')
+        links = self.soup.select('a[href]')
 
         normalized_self_title = re.sub(r"\s*\([^)]*\)", "", self.title or "")
         normalized_self_title = re.sub(r"\s+", " ", normalized_self_title).strip().lower()
 
         for link in links:
             href = link.get("href", "")
-            link_title = link.get('title', '')
-
-            if not href.startswith("/wiki/"):
+            
+            if not (href.startswith("/wiki/") or href.startswith("./")):
                 continue
+
+            decoded_title = self._get_normalized_title_from_href(href)
+            link_title = link.get('title', decoded_title)
 
             if any(link_title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore) or \
                "action=edit" in href or "&redlink=1" in href:
@@ -139,18 +153,12 @@ class PageClassifier:
             normalized_link_title = re.sub(r"\s+", " ", normalized_link_title).strip().lower()
             if normalized_self_title in normalized_link_title:
                 is_a_version = True
-
             else:
-                try:
-                    path = href.split("wiki/", 1)[1]
-                    decoded_title_from_href = unquote(path.split("#", 1)[0]).replace("_", " ")
-                    if decoded_title_from_href.startswith(self.title + "/"):
-                        is_a_version = True
-                except IndexError:
-                    continue
+                if decoded_title.startswith(self.title + "/"):
+                    is_a_version = True
 
             if is_a_version:
-                titles.add(link_title)
+                titles.add(decoded_title)
 
         logger.info(f"Extracted {len(titles)} version titles from hub page '{self.title}'.")
         return titles
@@ -160,19 +168,28 @@ class PageClassifier:
         if not isinstance(link, Tag) or link.name != 'a':
             return False
         href = link.get('href', '')
-        title = link.get('title', '')
-        if not title or not href:
+        
+        if not (href.startswith('/wiki/') or href.startswith('./')):
             return False
-        if not href.startswith('/wiki/') or '&redlink=1' in href or 'action=edit' in href:
+            
+        if '&redlink=1' in href or 'action=edit' in href:
             return False
+            
+        decoded_title = self._get_normalized_title_from_href(href)
+        title = link.get('title', decoded_title)
+        
+        if not title:
+            return False
+            
         if any(title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore):
             return False
-        if href.startswith('#'):
-            return False
+
         if link.find('img'):
             return False
-        if title == self.title:
+            
+        if title == self.title or decoded_title == self.title:
             return False
+            
         return True
 
     def _is_section_title_element(self, element: Tag) -> bool:
@@ -222,6 +239,11 @@ class PageClassifier:
 
         last_added_title = None
 
+        def extract_title_from_link(link: Tag) -> str:
+            href = link.get('href', '')
+            decoded_title = self._get_normalized_title_from_href(href)
+            return decoded_title  # Using the perfectly normalized decoded title directly
+
         for element in candidate_elements:
             if any(parent == element for parent in element.find_parents(['ul', 'ol', 'dl'])):
                  continue
@@ -239,24 +261,24 @@ class PageClassifier:
                 list_item_tags = 'dd' if element.name == 'dl' else 'li'
                 for item in element.find_all(list_item_tags, recursive=False):
                     link = item.find(self._is_valid_poem_link)
-                    if link and link.get('title'):
-                        title = link['title']
-                        if title != last_added_title:
+                    if link:
+                        title = extract_title_from_link(link)
+                        if title and title != last_added_title:
                             logger.debug(f"  Poem found in '{list_item_tags}': '{title}'")
                             ordered_items.append((title, PageType.POEM))
                             last_added_title = title
                     elif self._is_section_title_element(item):
                          title_text = item.get_text(strip=True)
-                         if title_text != last_added_title:
+                         if title_text and title_text != last_added_title:
                             logger.debug(f"  Section found in '{list_item_tags}': '{title_text}'")
                             ordered_items.append((title_text, PageType.SECTION_TITLE))
                             last_added_title = title_text
                 continue
 
             link = element.find(self._is_valid_poem_link)
-            if link and link.get('title'):
-                title = link['title']
-                if title != last_added_title:
+            if link:
+                title = extract_title_from_link(link)
+                if title and title != last_added_title:
                     logger.debug(f"Poem found in simple container '{element.name}': '{title}'")
                     ordered_items.append((title, PageType.POEM))
                     last_added_title = title

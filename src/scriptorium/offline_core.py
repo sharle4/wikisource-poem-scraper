@@ -162,7 +162,7 @@ class OfflineOrchestrator:
     def run(self):
         """Main execution method. Fully synchronous."""
         logger.info("=" * 60)
-        logger.info("OFFLINE MODE — Scriptorium v5.1.1")
+        logger.info("OFFLINE MODE — Scriptorium v5.1.2")
         logger.info("=" * 60)
         logger.info(f"Language: {self.lang}")
         logger.info(f"Root category: {self.category}")
@@ -255,7 +255,11 @@ class OfflineOrchestrator:
             # Second pass for newly discovered pages
             if discovered_page_ids:
                 discovered_page_ids -= already_processed
+                discovered_page_ids -= all_target_ids
                 discovered_page_ids -= set(poems_pending.keys())
+                discovered_page_ids -= set(collections.keys())
+                discovered_page_ids -= set(hubs.keys())
+                
                 if discovered_page_ids:
                     logger.info(
                         f"Second NDJSON pass for {len(discovered_page_ids)} "
@@ -543,7 +547,7 @@ class OfflineOrchestrator:
                 if link_type_name == PageType.POEM.name:
                     resolved_id = title_to_id.get(link_title)
                     if resolved_id is None:
-                        # Try with underscores
+                        # Try with underscores or vice versa
                         resolved_id = title_to_id.get(
                             link_title.replace(" ", "_")
                         )

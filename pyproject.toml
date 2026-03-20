@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scriptorium"
-version = "5.1.1"
+version = "5.1.2"
 description = "Intelligent scraper for extracting poems from Wikisource, supporting both online API and offline dump processing modes."
 readme = "README.md"
 authors = [
   { name = "Sharle", email = "charleskayssieh@gmail.com" },
 ]
 license = { file = "LICENSE" }
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

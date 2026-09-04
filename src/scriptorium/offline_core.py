@@ -22,7 +22,7 @@ import mwparserfromhell
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-from .classifier import PageClassifier, PageType
+from .classifier import PageClassifier, PageType, ADMIN_SUBPAGES
 from .cleaner import process_poem
 from .database import DatabaseManager
 from .dump_index import DumpIndexBuilder
@@ -162,7 +162,7 @@ class OfflineOrchestrator:
     def run(self):
         """Main execution method. Fully synchronous."""
         logger.info("=" * 60)
-        logger.info("OFFLINE MODE — Scriptorium v5.2.0")
+        logger.info("OFFLINE MODE — Scriptorium v5.3.0")
         logger.info("=" * 60)
         logger.info(f"Language: {self.lang}")
         logger.info(f"Root category: {self.category}")
@@ -583,6 +583,8 @@ class OfflineOrchestrator:
             # Also discover all subpages in SQLite for this collection
             subpages = self.index_builder.find_subpages_for_collection(index_conn, title)
             for sp_id, sp_title in subpages:
+                if any(sp_title.lower().endswith(sub) for sub in ADMIN_SUBPAGES):
+                    continue
                 if sp_id not in poems_pending and sp_id not in already_processed:
                     discovered_page_ids.add(sp_id)
 
@@ -727,11 +729,17 @@ class OfflineOrchestrator:
             # Also check if any subpages of this collection exist in poems_pending that were not in ordered_links:
             subpages = self.index_builder.find_subpages_for_collection(index_conn, coll_title)
             for sp_id, sp_title in subpages:
+                if any(sp_title.lower().endswith(sub) for sub in ADMIN_SUBPAGES):
+                    continue
                 if sp_id in poems_pending and sp_id not in enriched_poem_ids:
+                    inferred_section = None
+                    sp_parts = sp_title.split("/")
+                    if len(sp_parts) >= 3:
+                        inferred_section = sp_parts[1].strip()
                     context[sp_id] = {
                         "collection_page_id": coll_page_id,
                         "collection_title": coll_title,
-                        "section_title": None,
+                        "section_title": inferred_section,
                         "poem_order": poem_order,
                         "is_first_poem_in_collection": is_first,
                         "collection_obj": collection_obj,
@@ -761,7 +769,8 @@ class OfflineOrchestrator:
             # Check if the poem title suggests a collection (has a "/" separator)
             poem_title = pending["page_data"].get("title", "")
             if "/" in poem_title:
-                parent_title = poem_title.split("/")[0].strip()
+                parts = poem_title.split("/")
+                parent_title = parts[0].strip()
                 parent_id = title_to_id.get(parent_title) or title_to_id.get(parent_title.replace(" ", "_"))
                 if parent_id is not None and parent_id in collections:
                     # This poem belongs to a known collection
@@ -771,6 +780,8 @@ class OfflineOrchestrator:
                         ctx["collection_page_id"] = parent_id
                         ctx["collection_title"] = coll_data["title"]
                         ctx["collection_obj"] = coll_data.get("collection_obj")
+                        if len(parts) >= 3 and not ctx.get("section_title"):
+                            ctx["section_title"] = parts[1].strip()
 
         logger.info(
             f"Enrichment complete: {len(context)} poems have collection/hub context."

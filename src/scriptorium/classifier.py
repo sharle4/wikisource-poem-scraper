@@ -41,10 +41,21 @@ EDITION_IMPRINT_RE = re.compile(
 ADMIN_SUBPAGES = (
     "/texte entier",
     "/fac-similé",
+    "/fac-simile",
     "/concordance",
     "/éditions",
+    "/editions",
     "/table",
     "/sommaire",
+    "/notice",
+    "/appendice",
+    "/préface",
+    "/preface",
+    "/introduction",
+    "/avertissement",
+    "/bibliographie",
+    "/variantes",
+    "/notes",
 )
 
 
@@ -92,7 +103,7 @@ class PageClassifier:
             get_localized_prefix(lang, "category"),
             get_localized_prefix(lang, "author"),
             "Portail", "Aide", "Wikisource", "Fichier", "Spécial",
-            "Livre", "Discussion", "Modèle", "Projet"
+            "Livre", "Discussion", "Modèle", "Projet", "Page", "Index"
         ]
 
     def _get_page_signals(self) -> dict:
@@ -147,6 +158,10 @@ class PageClassifier:
             reason = "is_author_page" if self.title.startswith(get_localized_prefix(self.lang, "author") + ":") else "is_other_namespace"
             page_type = PageType.AUTHOR if reason == "is_author_page" else PageType.OTHER
             return page_type, reason
+
+        # Filter out administrative subpages (editions, full text, concordances, etc.)
+        if any(self.title.lower().endswith(sub) for sub in ADMIN_SUBPAGES):
+            return PageType.OTHER, "is_admin_subpage"
 
         signals = self._get_page_signals()
 
@@ -233,7 +248,8 @@ class PageClassifier:
                     is_a_version = True
 
             if is_a_version:
-                titles.add(decoded_title)
+                if not any(decoded_title.lower().endswith(sub) for sub in ADMIN_SUBPAGES):
+                    titles.add(decoded_title)
 
         logger.info(f"Extracted {len(titles)} version titles from hub page '{self.title}'.")
         return titles
@@ -249,6 +265,22 @@ class PageClassifier:
             
         if '&redlink=1' in href or 'action=edit' in href:
             return False
+
+        link_classes = link.get("class") or []
+        if isinstance(link_classes, str):
+            link_classes = link_classes.split()
+        if "mw-disambig" in link_classes:
+            return False
+
+        # Ignore links within header templates, navigation bars or noexport blocks
+        for parent in link.find_parents():
+            parent_classes = parent.get("class") or []
+            if isinstance(parent_classes, str):
+                parent_classes = parent_classes.split()
+            parent_id = parent.get("id") or ""
+            if any(c in ["ws-noexport", "headertemplate", "ws-header"] for c in parent_classes) or \
+               "headertemplate" in parent_id or "ws-header" in parent_id:
+                return False
             
         decoded_title = self._get_normalized_title_from_href(href)
         title = link.get('title', decoded_title)
@@ -256,7 +288,8 @@ class PageClassifier:
         if not title:
             return False
             
-        if any(title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore):
+        if any(title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore) or \
+           any(decoded_title.startswith(f"{prefix}:") for prefix in self.internal_prefixes_to_ignore):
             return False
 
         # Filter out administrative subpages (full text, appendices, concordances, etc.)
@@ -299,17 +332,34 @@ class PageClassifier:
         if re.match(r"^\d+$", cleaned):
             return False
 
-        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+        # Exclude dates/years and editorial notes
+        if re.match(r"^[-–—,\s]*(1[5-9]\d{2}|20\d{2})\b", cleaned):
+            return False
+        if re.match(r"^(manuscrits?|variantes?|notes?\b|remarques?\b|avertissement|source\b)", cleaned, re.I):
+            return False
+
+        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'dt']:
             return True
 
-        if element.name == 'dt':
+        style = element.get("style", "").lower()
+        if re.search(r"font-weight:\s*(bold|[6-9]00)", style):
             return True
 
-        if element.find(['b', 'strong', 'i', 'em']):
+        if element.find(['b', 'strong']):
+            return True
+
+        if ("text-align: center" in style or "text-align:center" in style) and cleaned.isupper() and len(cleaned) >= 3:
+            return True
+
+        classes = element.get("class") or []
+        if isinstance(classes, str):
+            classes = classes.split()
+        if any("section" in c.lower() or "partie" in c.lower() for c in classes):
             return True
 
         if element.name in ['li', 'p'] and not has_valid_link:
-            return True
+            if cleaned.isupper() and len(cleaned) >= 3:
+                return True
 
         return False
 

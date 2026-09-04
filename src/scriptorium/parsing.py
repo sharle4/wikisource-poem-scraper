@@ -29,6 +29,9 @@ class PoemParser:
         if not poem_blocks:
             return None
 
+        STANZA_DELIM = "===STANZA_DELIM==="
+        VERSE_DELIM = "===VERSE_DELIM==="
+
         all_stanzas: List[List[str]] = []
         raw_markers: List[str] = []
 
@@ -37,33 +40,49 @@ class PoemParser:
 
             working_block = copy.copy(block)
 
-            for pagenum in working_block.find_all("span", class_="pagenum"):
-                pagenum.decompose()
+            for noise in working_block.find_all(["span", "div"], class_=["pagenum", "ws-noexport", "mw-editsection"]):
+                noise.decompose()
 
-            for br in working_block.find_all("br"):
-                br.replace_with("\n")
+            has_br = bool(working_block.find("br"))
+            has_p = bool(working_block.find("p"))
 
-            for p in working_block.find_all("p"):
-                p.append("\n\n")
+            if has_br or has_p:
+                for p in working_block.find_all("p"):
+                    p.append(f" {STANZA_DELIM} ")
 
-            for div in working_block.find_all("div"):
-                div.append("\n")
+                for div in working_block.find_all("div"):
+                    div.append(f" {STANZA_DELIM} ")
 
-            text_content = working_block.get_text(separator="")
+                html_str = str(working_block)
+                # Two or more consecutive <br> tags (with optional whitespace) denote a stanza break
+                html_str = re.sub(r'(?:<br\s*/?>\s*){2,}', f' {STANZA_DELIM} ', html_str, flags=re.IGNORECASE)
+                # A single <br> tag denotes a verse (line) break
+                html_str = re.sub(r'<br\s*/?>', f' {VERSE_DELIM} ', html_str, flags=re.IGNORECASE)
 
-            text_content = text_content.replace("\xa0", " ")
+                temp_soup = BeautifulSoup(html_str, "lxml")
+                text_content = temp_soup.get_text(separator=" ")
+                text_content = text_content.replace("\xa0", " ")
 
-            text_content = "\n".join(line.strip() for line in text_content.split("\n"))
-            
-            text_content = re.sub(r'\n{2,}', '\n\n', text_content)
-
-            raw_stanzas = text_content.split("\n\n")
-
-            for raw_stanza in raw_stanzas:
-                stanza_lines = raw_stanza.strip().split("\n")
-                verses = [line.strip() for line in stanza_lines if line.strip()]
-                if verses:
-                    all_stanzas.append(verses)
+                raw_stanzas = text_content.split(STANZA_DELIM)
+                for raw_stanza in raw_stanzas:
+                    lines = raw_stanza.split(VERSE_DELIM)
+                    verses = []
+                    for line in lines:
+                        for subline in line.split("\n"):
+                            cleaned = re.sub(r"\s+", " ", subline).strip()
+                            if cleaned:
+                                verses.append(cleaned)
+                    if verses:
+                        all_stanzas.append(verses)
+            else:
+                # Wikitext or plain text fallback (e.g. raw text within <poem> tags)
+                text_content = working_block.get_text()
+                text_content = text_content.replace("\xa0", " ")
+                raw_stanzas = re.split(r"\n\s*\n", text_content)
+                for raw_stanza in raw_stanzas:
+                    verses = [line.strip() for line in raw_stanza.splitlines() if line.strip()]
+                    if verses:
+                        all_stanzas.append(verses)
 
         if not all_stanzas:
             return None

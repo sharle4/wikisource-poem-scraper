@@ -130,7 +130,7 @@ class PoemProcessor:
 
         # Contextual inheritance from parent collection
         if collection_context:
-            if not final_meta_dict.get("source_collection") and collection_context.title:
+            if collection_context.title:
                 final_meta_dict["source_collection"] = collection_context.title
             if not final_meta_dict.get("author") and collection_context.author:
                 final_meta_dict["author"] = collection_context.author

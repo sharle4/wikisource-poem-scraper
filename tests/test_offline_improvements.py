@@ -106,6 +106,70 @@ class TestPageClassifierImprovements(unittest.TestCase):
         self.assertNotIn("Mon Recueil", link_titles)
         self.assertNotIn("Auteur:Charles Baudelaire", link_titles)
 
+    def test_admin_subpages_excluded_from_collection(self):
+        admin_titles = [
+            "Les Fleurs du mal/Éditions",
+            "Les Fleurs du mal/editions",
+            "Les Fleurs du mal/Texte entier",
+            "Les Fleurs du mal/texte entier",
+            "Les Fleurs du mal/Concordance",
+            "Les Fleurs du mal/Table",
+            "Les Fleurs du mal/Sommaire",
+        ]
+        html = '<div class="mw-parser-output"><div class="tableItem"><a href="./Poeme">Poème</a></div></div>'
+        soup = BeautifulSoup(html, "lxml")
+        for title in admin_titles:
+            page_data = {"pageid": 999, "title": title, "ns": 0, "categories": []}
+            classifier = PageClassifier(page_data, soup, "fr", mwparserfromhell.parse(""))
+            page_type, reason = classifier.classify()
+            self.assertEqual(page_type, PageType.OTHER, f"Expected {title} to be classified as OTHER, got {page_type}")
+            self.assertEqual(reason, "is_admin_subpage")
+
+    def test_hub_extract_sub_pages_filters_admin(self):
+        html = """
+        <div class="mw-parser-output">
+            <ul>
+                <li><a href="./Les_Fleurs_du_mal_(1857)">Les Fleurs du mal (1857)</a></li>
+                <li><a href="./Les_Fleurs_du_mal_(1861)">Les Fleurs du mal (1861)</a></li>
+                <li><a href="./Les_Fleurs_du_mal/%C3%89ditions">Les Fleurs du mal/Éditions</a></li>
+                <li><a href="./Les_Fleurs_du_mal/Texte_entier">Les Fleurs du mal/Texte entier</a></li>
+            </ul>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        page_data = {"pageid": 500, "title": "Les Fleurs du mal", "ns": 0, "categories": []}
+        classifier = PageClassifier(page_data, soup, "fr", mwparserfromhell.parse(""))
+        sub_pages = classifier.extract_hub_sub_pages()
+        self.assertIn("Les Fleurs du mal (1857)", sub_pages)
+        self.assertIn("Les Fleurs du mal (1861)", sub_pages)
+        self.assertNotIn("Les Fleurs du mal/Éditions", sub_pages)
+        self.assertNotIn("Les Fleurs du mal/Texte entier", sub_pages)
+
+    def test_styled_div_and_centered_section_detection(self):
+        html = """
+        <div class="mw-parser-output">
+            <div class="headertemplate ws-noexport"><a href="./Les_Fleurs_du_mal">Hub Parent</a></div>
+            <div style="margin: 1em auto;text-align: center;font-weight: bold;">SPLEEN ET IDÉAL</div>
+            <div class="tableItem"><a href="./Recueil/Poeme_1">Poème 1</a></div>
+            <div class="tableItem"><a href="./Page:Scan_djvu/12">Page:Scan djvu/12</a></div>
+            <div style="text-align: center;">TABLEAUX PARISIENS</div>
+            <div class="tableItem"><a href="./Recueil/Poeme_2">Poème 2</a></div>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        page_data = {"pageid": 100, "title": "Recueil", "ns": 0, "categories": []}
+        classifier = PageClassifier(page_data, soup, "fr", mwparserfromhell.parse(""))
+        links = classifier.extract_ordered_collection_links()
+
+        sections = [t for t, k in links if k == PageType.SECTION_TITLE]
+        poems = [t for t, k in links if k == PageType.POEM]
+
+        self.assertEqual(sections, ["SPLEEN ET IDÉAL", "TABLEAUX PARISIENS"])
+        self.assertEqual(poems, ["Recueil/Poeme 1", "Recueil/Poeme 2"])
+        # ProofreadPage and header links should not be included
+        self.assertNotIn("Page:Scan djvu/12", poems)
+        self.assertNotIn("Les Fleurs du mal", poems)
+
 
 class TestPoemProcessorImprovements(unittest.TestCase):
     def setUp(self):
@@ -182,6 +246,106 @@ class TestPoemProcessorImprovements(unittest.TestCase):
         self.assertEqual(poem.metadata.publication_date, "1868")
         self.assertEqual(poem.metadata.publisher, "Michel Lévy frères")
         self.assertEqual(poem.metadata.source_collection, "Les Fleurs du mal (1868)")
+
+    def test_end_to_end_sonnet_and_collection_section_enrichment(self):
+        # 1. Collection with styled div section titles
+        coll_html = """
+        <div class="mw-parser-output">
+            <div class="headertemplate ws-noexport">
+                <a href="./Auteur:Charles_Baudelaire">Charles Baudelaire</a>
+            </div>
+            <div class="tableItem"><a href="./Les_Fleurs_du_mal_(1861)/Au_lecteur">Au lecteur</a></div>
+            <div style="margin: 1em auto;text-align: center;font-weight: bold;">SPLEEN ET IDÉAL</div>
+            <div class="tableItem"><a href="./Les_Fleurs_du_mal_(1861)/B%C3%A9n%C3%A9diction">Bénédiction</a></div>
+            <div style="text-align: center;font-weight: bold;">TABLEAUX PARISIENS</div>
+            <div class="tableItem"><a href="./Les_Fleurs_du_mal_(1861)/%C3%80_une_passante">À une passante</a></div>
+        </div>
+        """
+        coll_soup = BeautifulSoup(coll_html, "lxml")
+        classifier = PageClassifier({"pageid": 1642, "title": "Les Fleurs du mal (1861)", "ns": 0}, coll_soup, "fr", mwparserfromhell.parse(""))
+        ordered_items = classifier.extract_ordered_collection_links()
+
+        sections_map = {}
+        curr_sec = None
+        for item_title, kind in ordered_items:
+            if kind == PageType.SECTION_TITLE:
+                curr_sec = item_title
+            elif kind == PageType.POEM:
+                sections_map[item_title] = curr_sec
+
+        self.assertIsNone(sections_map.get("Les Fleurs du mal (1861)/Au lecteur"))
+        self.assertEqual(sections_map.get("Les Fleurs du mal (1861)/Bénédiction"), "SPLEEN ET IDÉAL")
+        self.assertEqual(sections_map.get("Les Fleurs du mal (1861)/À une passante"), "TABLEAUX PARISIENS")
+
+        # 2. Process sonnet À une passante with Parsoid HTML markup
+        sonnet_html = """
+        <div class="mw-parser-output">
+            <div class="poem verse">
+                <p><br/>
+                La rue assourdissante autour de moi hurlait.<br/>
+                Longue, mince, en grand deuil, douleur majestueuse,<br/>
+                Une femme passa, d’une main fastueuse<br/>
+                Soulevant, balançant le feston et l’ourlet ;<br/>
+                <br/>
+                Agile et noble, avec sa jambe de statue.<br/>
+                Moi, je buvais, crispé comme un extravagant,<br/>
+                Dans son œil, ciel livide où germe l’ouragan,<br/>
+                La douceur qui fascine et le plaisir qui tue.
+                </p>
+            </div>
+            <div class="poem verse">
+                <p><br/>
+                Un éclair… puis la nuit ! — Fugitive beauté<br/>
+                Dont le regard m’a fait soudainement renaître,<br/>
+                Ne te verrai-je plus que dans l’éternité ?<br/>
+                <br/>
+                Ailleurs, bien loin d’ici ! trop tard ! jamais peut-être !<br/>
+                Car j’ignore où tu fuis, tu ne sais où je vais,<br/>
+                Ô toi que j’eusse aimée, ô toi qui le savais !
+                </p>
+            </div>
+        </div>
+        """
+        sonnet_soup = BeautifulSoup(sonnet_html, "lxml")
+        coll_context = Collection(
+            page_id=1642,
+            title="Les Fleurs du mal (1861)",
+            url="https://fr.wikisource.org/wiki/Les_Fleurs_du_mal_(1861)",
+            author="Charles Baudelaire",
+            publication_date="1861",
+            publisher="Poulet-Malassis et de Broise",
+        )
+
+        poem_data = {
+            "pageid": 11774,
+            "title": "Les Fleurs du mal (1861)/À une passante",
+            "fullurl": "https://fr.wikisource.org/wiki/Les_Fleurs_du_mal_(1861)/%C3%80_une_passante",
+            "revisions": [{"revid": 15069894, "content": ""}],
+        }
+
+        poem = self.processor.process(
+            page_data=poem_data,
+            soup=sonnet_soup,
+            lang="fr",
+            wikicode=mwparserfromhell.parse(""),
+            collection_context=coll_context,
+            order_in_collection=92,
+            section_title_in_collection=sections_map.get("Les Fleurs du mal (1861)/À une passante"),
+            is_first_poem_in_collection=False,
+        )
+
+        self.assertEqual(poem.collection_page_id, 1642)
+        self.assertEqual(poem.collection_title, "Les Fleurs du mal (1861)")
+        self.assertEqual(poem.section_title, "TABLEAUX PARISIENS")
+        self.assertEqual(poem.poem_order, 92)
+        self.assertEqual(poem.metadata.author, "Charles Baudelaire")
+        self.assertEqual(poem.metadata.source_collection, "Les Fleurs du mal (1861)")
+        self.assertEqual(poem.metadata.publication_date, "1861")
+        self.assertEqual(poem.metadata.publisher, "Poulet-Malassis et de Broise")
+
+        # 4 stanzas of the sonnet
+        self.assertEqual(len(poem.structure.stanzas), 4)
+        self.assertEqual([len(s) for s in poem.structure.stanzas], [4, 4, 3, 3])
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "Scriptorium/5.2.0 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
+    "Scriptorium/5.3.0 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 

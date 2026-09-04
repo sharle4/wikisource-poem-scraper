@@ -10,6 +10,13 @@ from pathlib import Path
 from collections import Counter, defaultdict
 from typing import Iterator, Dict, Any
 
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 def is_gz(path: Path) -> bool:
     """Checks if a file is Gzip-compressed."""
     return path.suffix == ".gz" or path.name.endswith(".jsonl.gz")

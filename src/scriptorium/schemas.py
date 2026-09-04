@@ -24,6 +24,8 @@ class Collection(BaseModel):
     page_id: int
     title: str
     author: Optional[str] = None
+    publication_date: Optional[str] = None
+    publisher: Optional[str] = None
     url: HttpUrl
     content: List[CollectionComponent] = Field(default_factory=list)
 

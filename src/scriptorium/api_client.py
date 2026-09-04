@@ -1,16 +1,23 @@
 import asyncio
-import logging
-import time
 import collections
+import logging
+import ssl
+import time
 from typing import Dict, Any, Optional, AsyncGenerator
 
 import aiohttp
 import backoff
 
+try:
+    import certifi
+    _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    _SSL_CONTEXT = ssl.create_default_context()
+
 logger = logging.getLogger(__name__)
 
 WIKIMEDIA_USER_AGENT = (
-    "Scriptorium/5.1.2 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
+    "Scriptorium/5.2.0 (https://github.com/sharle4/scriptorium; charleskayssieh@gmail.com) "
     "aiohttp/" + aiohttp.__version__
 )
 
@@ -40,7 +47,10 @@ class WikiAPIClient:
 
     async def __aenter__(self):
         cookie_jar = aiohttp.CookieJar(unsafe=True)
-        self.session = aiohttp.ClientSession(headers=self.headers, cookie_jar=cookie_jar)
+        connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT)
+        self.session = aiohttp.ClientSession(
+            headers=self.headers, cookie_jar=cookie_jar, connector=connector
+        )
 
         if self.bot_username and self.bot_password:
             await self._login()

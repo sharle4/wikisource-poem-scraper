@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scriptorium"
-version = "5.1.2"
+version = "5.2.0"
 description = "Intelligent scraper for extracting poems from Wikisource, supporting both online API and offline dump processing modes."
 readme = "README.md"
 authors = [
@@ -26,6 +26,7 @@ dependencies = [
     "aiohttp[speedups]>=3.9.0",
     "aiosqlite>=0.19.0",
     "backoff>=2.2.0",
+    "certifi>=2024.0.0",
     "pydantic>=2.7.0",
     "tqdm>=4.66.0",
     "mwparserfromhell>=0.6.0",
@@ -52,3 +53,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]

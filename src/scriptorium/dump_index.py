@@ -186,35 +186,54 @@ class DumpIndexBuilder:
 
         Category titles are stored with underscores in linktarget.
         """
-        # Normalize: replace spaces with underscores for the DB lookup
-        root_title_underscored = root_category_title.replace(" ", "_")
+        seed_titles = [root_category_title]
+        # In French Wikisource, 'Poèmes' and 'Poèmes par Auteur' are complementary trees:
+        # 'Poèmes' contains thematic, chronological, and general collections, while
+        # 'Poèmes par Auteur' contains author subcategories. Seeding both ensures exhaustiveness.
+        if lang == "fr" and root_category_title.lower() in [
+            "poèmes", "poèmes par auteur", "poemes", "poemes par auteur"
+        ]:
+            for alt in ["Poèmes", "Poèmes par Auteur"]:
+                if alt not in seed_titles:
+                    seed_titles.append(alt)
 
-        # Find the root category's lt_id
-        row = conn.execute(
-            "SELECT lt_id FROM linktarget WHERE lt_namespace = 14 AND lt_title = ?",
-            (root_title_underscored,),
-        ).fetchone()
-
-        if row is None:
-            # Try with spaces too (some dumps may store it differently)
+        root_lt_ids: Set[int] = set()
+        for st in seed_titles:
+            st_underscored = st.replace(" ", "_")
             row = conn.execute(
                 "SELECT lt_id FROM linktarget WHERE lt_namespace = 14 AND lt_title = ?",
-                (root_category_title,),
+                (st_underscored,),
             ).fetchone()
 
-        if row is None:
+            if row is None:
+                # Try with spaces too
+                row = conn.execute(
+                    "SELECT lt_id FROM linktarget WHERE lt_namespace = 14 AND lt_title = ?",
+                    (st,),
+                ).fetchone()
+
+            if row is None:
+                # Case-insensitive LIKE fallback
+                row = conn.execute(
+                    "SELECT lt_id FROM linktarget WHERE lt_namespace = 14 AND lt_title LIKE ? LIMIT 1",
+                    (st_underscored,),
+                ).fetchone()
+
+            if row is not None:
+                root_lt_ids.add(row[0])
+
+        if not root_lt_ids:
             logger.error(
                 f"Root category '{root_category_title}' not found in linktarget table."
             )
             return set()
 
-        root_lt_id = row[0]
-        logger.info(f"Root category '{root_category_title}' has lt_id={root_lt_id}")
+        logger.info(f"Root categories {seed_titles} have lt_ids={root_lt_ids}")
 
         # BFS to traverse all subcategories
-        visited_lt_ids: Set[int] = {root_lt_id}
-        queue: deque[int] = deque([root_lt_id])
-        all_category_lt_ids: Set[int] = {root_lt_id}
+        visited_lt_ids: Set[int] = set(root_lt_ids)
+        queue: deque[int] = deque(root_lt_ids)
+        all_category_lt_ids: Set[int] = set(root_lt_ids)
 
         while queue:
             current_lt_id = queue.popleft()
@@ -385,3 +404,37 @@ class DumpIndexBuilder:
             (namespace,),
         ).fetchall()
         return {row[1].replace("_", " "): row[0] for row in rows}
+
+    def find_subpages_for_collection(
+        self, conn: sqlite3.Connection, collection_title: str
+    ) -> list[tuple[int, str]]:
+        """
+        Finds all namespace 0 subpages belonging to a collection title.
+        Filters out administrative subpages (e.g. /Table, /Appendice, /Texte entier).
+        """
+        clean_title = collection_title.replace("_", " ")
+        underscored_title = collection_title.replace(" ", "_")
+
+        rows = conn.execute(
+            """
+            SELECT page_id, title FROM pages
+            WHERE namespace = 0 AND (
+                title LIKE ? OR title LIKE ?
+            )
+            """,
+            (f"{clean_title}/%", f"{underscored_title}/%"),
+        ).fetchall()
+
+        admin_fragments = [
+            "/table", "/texte entier", "/notice", "/appendice",
+            "/concordance", "/éditions", "/editions"
+        ]
+
+        subpages = []
+        for pid, title in rows:
+            t_clean = title.replace("_", " ")
+            if any(frag in t_clean.lower() for frag in admin_fragments):
+                continue
+            subpages.append((pid, t_clean))
+
+        return subpages

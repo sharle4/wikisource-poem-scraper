@@ -1,6 +1,6 @@
 <div align="center">
 
-# 📜 Scriptorium v5
+# 📜 Scriptorium v5.2
 
 **Build structured corpora from Wikisource — online or offline.**
 
@@ -21,7 +21,9 @@ Two modes cover different needs. **Online mode** queries the MediaWiki API and f
 ## ✨ Features
 
 - 🔄 **Dual-mode pipeline** — online (async API) or offline (local dumps), same output schema
-- 📚 **Collection-aware** — resolves poems to parent collections with section titles and reading order
+- 📚 **Exhaustive collection extraction** — natively detects Parsoid HTML markup (`tableItem`), ProofreadPage tables, and resolves entire collection structures with clean section titles and reading order
+- 🏷️ **Bibliographic imprint parsing & metadata inheritance** — extracts publication year and publisher from edition mentions (`parse_imprint`) and automatically inherits missing metadata from parent collections to child poems
+- 🔁 **Multi-pass discovery & SQLite subpage lookup** — recursive bounded passes (up to 3 passes) combined with SQLite `pages` subpage queries ensure zero missed poems
 - 🔀 **Hub support** — groups multiple editions of the same poem under a single hub
 - 👤 **Author normalization** — cleans names from HTML microdata and wikitext templates
 - 📊 **Structured output** — stanzas, verses, metadata, and normalized text in Pydantic-validated JSONL
@@ -209,22 +211,23 @@ Sequential 5-phase batch pipeline with no network I/O:
 
 ```
 Phase 1          Phase 2           Phase 3          Phase 4          Phase 5
-SQL Dumps ──────> NDJSON Files ───> In-Memory ──────> XML Dumps ─────> Write Output
-  → SQLite          → Classify       Enrichment        → Wikitext       → JSONL + DB
-    Index           (multiprocess)
+SQL Dumps ──────> NDJSON Files ───> XML Dumps ─────> In-Memory ──────> Write Output
+  → SQLite          → Classify       → Wikitext       Enrichment       → JSONL + DB
+    Index           (multiprocess    (poems+colls)    & Inheritance
+                    & multi-pass)
 ```
 
-**Phase 1 — Build index:** Parses SQL dumps into SQLite. Custom state-machine parser handles MySQL `INSERT` syntax and `varbinary` UTF-8 decoding. BFS category-tree traversal finds target page IDs. Uses modern MediaWiki schema (`cl_target_id` → `linktarget` join).
+**Phase 1 — Build index:** Parses SQL dumps into SQLite. Custom state-machine parser handles MySQL `INSERT` syntax and `varbinary` UTF-8 decoding. Dual-root category-tree traversal simultaneously traverses `Poèmes` and `Poèmes par Auteur` (in French) to capture all 27,900+ poem categories.
 
-**Phase 2 — Stream NDJSON:** Streams ~21 GB of Enterprise HTML dumps. Regex pre-filter on raw bytes skips irrelevant pages before JSON parsing. Parallel classification via `ProcessPoolExecutor`. Collections and hubs trigger a bounded second pass for newly discovered pages.
+**Phase 2 — Stream NDJSON:** Streams ~21 GB of Enterprise HTML dumps. Parallel classification with native support for Parsoid HTML (`tableItem`, ProofreadPage tables, and subpages). Clean section extraction filters out TOC artifacts (headers, leader dots, page numbers). Multi-pass discovery (up to 3 bounded passes) coupled with SQLite subpage resolution ensures all child poems and sub-collections are enqueued.
 
-**Phase 3 — Enrich:** Maps poems to parent collections and hubs using in-memory data from Phase 2. No network calls.
+**Phase 3 — Extract wikitext:** Streams XML dumps with `iterparse` at constant memory for **both** pending poems and collections, retrieving `raw_wikitext` and metadata templates (`{{titre}}`, `{{infoédit}}`, `{{header}}`).
 
-**Phase 4 — Extract wikitext:** Streams XML dumps with `iterparse` at constant memory. Provides `raw_wikitext` and `checksum_sha256` fields that NDJSON lacks.
+**Phase 4 — Enrich collections & inherit metadata:** Parses bibliographic imprints (`parse_imprint`) to extract publication dates and publishers for each collection. Full `Collection` objects (with sections, ordered poems, date, publisher) are constructed. Missing metadata in child poems automatically inherits from the parent collection.
 
 > Why both NDJSON *and* XML? NDJSON has rendered HTML (resolved transclusions) but no wikitext. XML has raw wikitext but no rendered HTML. Both are needed.
 
-**Phase 5 — Write:** Processes each poem through `PoemProcessor.process()` (same code as online mode). Output sorted by `page_id` for reproducibility.
+**Phase 5 — Write:** Processes each poem through `PoemProcessor.process()` (same code as online mode). Writes validated `poems.jsonl.gz`, cleaned `poems.cleaned.jsonl.gz`, and SQLite index sorted by `page_id` for strict reproducibility.
 
 ### Data reconciliation — the Golden Record
 

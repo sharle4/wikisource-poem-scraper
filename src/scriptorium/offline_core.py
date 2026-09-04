@@ -162,7 +162,7 @@ class OfflineOrchestrator:
     def run(self):
         """Main execution method. Fully synchronous."""
         logger.info("=" * 60)
-        logger.info("OFFLINE MODE — Scriptorium v5.1.2")
+        logger.info("OFFLINE MODE — Scriptorium v5.2.0")
         logger.info("=" * 60)
         logger.info(f"Language: {self.lang}")
         logger.info(f"Root category: {self.category}")
@@ -252,54 +252,53 @@ class OfflineOrchestrator:
                 pass_number=1,
             )
 
-            # Second pass for newly discovered pages
-            if discovered_page_ids:
-                discovered_page_ids -= already_processed
-                discovered_page_ids -= all_target_ids
-                discovered_page_ids -= set(poems_pending.keys())
-                discovered_page_ids -= set(collections.keys())
-                discovered_page_ids -= set(hubs.keys())
-                
-                if discovered_page_ids:
-                    logger.info(
-                        f"Second NDJSON pass for {len(discovered_page_ids)} "
-                        f"discovered pages (from collections/hubs)."
-                    )
-                    self._process_ndjson_pass(
-                        index_conn,
-                        discovered_page_ids,
-                        title_to_id,
-                        collection_page_ids,
-                        poems_pending,
-                        collections,
-                        hubs,
-                        set(),  # no further discovery
-                        already_processed,
-                        pass_number=2,
-                    )
+            # Multi-pass loop for newly discovered pages (up to 3 passes)
+            current_pass = 2
+            max_passes = 3
+            while discovered_page_ids and current_pass <= max_passes:
+                to_process = (
+                    discovered_page_ids
+                    - already_processed
+                    - all_target_ids
+                    - set(poems_pending.keys())
+                    - set(collections.keys())
+                    - set(hubs.keys())
+                )
+                if not to_process:
+                    break
+                logger.info(
+                    f"NDJSON pass {current_pass} for {len(to_process)} "
+                    f"discovered pages (from collections/hubs/subpages)."
+                )
+                next_discovered: Set[int] = set()
+                self._process_ndjson_pass(
+                    index_conn,
+                    to_process,
+                    title_to_id,
+                    collection_page_ids,
+                    poems_pending,
+                    collections,
+                    hubs,
+                    next_discovered if current_pass < max_passes else set(),
+                    already_processed,
+                    pass_number=current_pass,
+                )
+                discovered_page_ids = next_discovered
+                current_pass += 1
 
             logger.info(
                 f"NDJSON processing complete: {len(poems_pending)} poems pending, "
                 f"{len(collections)} collections, {len(hubs)} hubs."
             )
 
-            # ── PHASE 3: COLLECTION & HUB ENRICHMENT ──
+            # ── PHASE 3: WIKITEXT EXTRACTION (XML) ──
             logger.info("")
             logger.info("=" * 40)
-            logger.info("PHASE 3: Collection & hub enrichment")
+            logger.info("PHASE 3: Extracting wikitext from XML dumps")
             logger.info("=" * 40)
 
-            poem_collection_context = self._build_collection_context(
-                collections, hubs, poems_pending, title_to_id, index_conn
-            )
-
-            # ── PHASE 4: WIKITEXT ENRICHMENT (XML) ──
-            logger.info("")
-            logger.info("=" * 40)
-            logger.info("PHASE 4: Extracting wikitext from XML dumps")
-            logger.info("=" * 40)
-
-            wikitext_page_ids = set(poems_pending.keys())
+            # Include BOTH pending poems AND collections for XML wikitext extraction
+            wikitext_page_ids = set(poems_pending.keys()) | set(collections.keys())
             wikitext_dict: Dict[int, str] = {}
 
             for record in iter_xml_pages(
@@ -311,7 +310,17 @@ class OfflineOrchestrator:
 
             logger.info(
                 f"XML extraction complete: found wikitext for "
-                f"{len(wikitext_dict)}/{len(wikitext_page_ids)} poems."
+                f"{len(wikitext_dict)}/{len(wikitext_page_ids)} pages."
+            )
+
+            # ── PHASE 4: COLLECTION & HUB ENRICHMENT ──
+            logger.info("")
+            logger.info("=" * 40)
+            logger.info("PHASE 4: Collection & hub enrichment")
+            logger.info("=" * 40)
+
+            poem_collection_context = self._build_collection_context(
+                collections, hubs, poems_pending, title_to_id, index_conn, wikitext_dict
             )
 
             # ── PHASE 5: FINALIZE AND WRITE ──
@@ -454,7 +463,9 @@ class OfflineOrchestrator:
             if page_id in already_processed:
                 continue
 
-            categories = page_categories.get(page_id, set())
+            categories = set(page_categories.get(page_id, set()))
+            if page_id in collection_page_ids:
+                categories.add("Recueils de poèmes")
 
             worker_args = (
                 page_id,
@@ -539,6 +550,7 @@ class OfflineOrchestrator:
             collections[page_id] = {
                 "title": title,
                 "url": url,
+                "html": result.get("html", ""),
                 "ordered_links": ordered_links,
             }
 
@@ -551,6 +563,11 @@ class OfflineOrchestrator:
                         resolved_id = title_to_id.get(
                             link_title.replace(" ", "_")
                         )
+                    if resolved_id is None:
+                        # Try normalizing curly vs straight apostrophes
+                        alt_title = link_title.replace("’", "'") if "’" in link_title else link_title.replace("'", "’")
+                        resolved_id = title_to_id.get(alt_title) or title_to_id.get(alt_title.replace(" ", "_"))
+
                     if resolved_id is not None:
                         if (
                             resolved_id not in poems_pending
@@ -562,6 +579,12 @@ class OfflineOrchestrator:
                             f"Could not resolve poem title '{link_title}' "
                             f"from collection '{title}'."
                         )
+
+            # Also discover all subpages in SQLite for this collection
+            subpages = self.index_builder.find_subpages_for_collection(index_conn, title)
+            for sp_id, sp_title in subpages:
+                if sp_id not in poems_pending and sp_id not in already_processed:
+                    discovered_page_ids.add(sp_id)
 
             self.skipped_counter += 1
 
@@ -618,6 +641,7 @@ class OfflineOrchestrator:
         poems_pending: Dict[int, Dict[str, Any]],
         title_to_id: Dict[str, int],
         index_conn: sqlite3.Connection,
+        wikitext_dict: Optional[Dict[int, str]] = None,
     ) -> Dict[int, Dict[str, Any]]:
         """
         Build a mapping: poem_page_id → collection/hub context.
@@ -625,26 +649,38 @@ class OfflineOrchestrator:
           - collection_page_id, collection_title, section_title, poem_order
           - hub_title, hub_page_id
           - is_first_poem_in_collection
-          - collection_obj (Collection object, only for first poem)
+          - collection_obj (Collection object)
         """
         context: Dict[int, Dict[str, Any]] = {}
+        from .processors import extract_page_metadata
 
         # Process collections
         for coll_page_id, coll_data in collections.items():
             coll_title = coll_data["title"]
             coll_url = coll_data["url"]
             ordered_links = coll_data.get("ordered_links", [])
+            coll_html = coll_data.get("html", "")
+            coll_wikitext = wikitext_dict.get(coll_page_id, "") if wikitext_dict else ""
 
-            # Build Collection object
+            coll_soup = BeautifulSoup(coll_html, "lxml") if coll_html else BeautifulSoup("", "lxml")
+            coll_wikicode = mwparserfromhell.parse(coll_wikitext) if coll_wikitext else mwparserfromhell.parse("")
+            coll_meta = extract_page_metadata(coll_soup, coll_wikicode, coll_title)
+
+            # Build enriched Collection object
             collection_obj = Collection(
                 page_id=coll_page_id,
                 title=coll_title,
                 url=coll_url,
+                author=coll_meta.get("author"),
+                publication_date=coll_meta.get("publication_date"),
+                publisher=coll_meta.get("publisher"),
             )
+            coll_data["collection_obj"] = collection_obj
 
             current_section: Optional[Section] = None
             poem_order = 0
             is_first = True
+            enriched_poem_ids: Set[int] = set()
 
             for link_title, link_type_name in ordered_links:
                 if link_type_name == PageType.SECTION_TITLE.name:
@@ -654,8 +690,12 @@ class OfflineOrchestrator:
                     resolved_id = title_to_id.get(link_title)
                     if resolved_id is None:
                         resolved_id = title_to_id.get(link_title.replace(" ", "_"))
+                    if resolved_id is None:
+                        alt_title = link_title.replace("’", "'") if "’" in link_title else link_title.replace("'", "’")
+                        resolved_id = title_to_id.get(alt_title) or title_to_id.get(alt_title.replace(" ", "_"))
 
                     if resolved_id is not None and resolved_id in poems_pending:
+                        enriched_poem_ids.add(resolved_id)
                         encoded_title = quote(link_title.replace(" ", "_"))
                         poem_info = PoemInfo(
                             title=link_title,
@@ -678,11 +718,26 @@ class OfflineOrchestrator:
                             "section_title": section_title,
                             "poem_order": poem_order,
                             "is_first_poem_in_collection": is_first,
-                            "collection_obj": collection_obj if is_first else None,
+                            "collection_obj": collection_obj,
                         }
 
                         poem_order += 1
                         is_first = False
+
+            # Also check if any subpages of this collection exist in poems_pending that were not in ordered_links:
+            subpages = self.index_builder.find_subpages_for_collection(index_conn, coll_title)
+            for sp_id, sp_title in subpages:
+                if sp_id in poems_pending and sp_id not in enriched_poem_ids:
+                    context[sp_id] = {
+                        "collection_page_id": coll_page_id,
+                        "collection_title": coll_title,
+                        "section_title": None,
+                        "poem_order": poem_order,
+                        "is_first_poem_in_collection": is_first,
+                        "collection_obj": collection_obj,
+                    }
+                    poem_order += 1
+                    is_first = False
 
             collection_log.info(
                 f"Collection '{coll_title}' (id:{coll_page_id}): "
@@ -707,13 +762,15 @@ class OfflineOrchestrator:
             poem_title = pending["page_data"].get("title", "")
             if "/" in poem_title:
                 parent_title = poem_title.split("/")[0].strip()
-                parent_id = title_to_id.get(parent_title)
+                parent_id = title_to_id.get(parent_title) or title_to_id.get(parent_title.replace(" ", "_"))
                 if parent_id is not None and parent_id in collections:
                     # This poem belongs to a known collection
+                    coll_data = collections[parent_id]
                     ctx = context.setdefault(page_id, {})
                     if not ctx.get("collection_page_id"):
                         ctx["collection_page_id"] = parent_id
-                        ctx["collection_title"] = collections[parent_id]["title"]
+                        ctx["collection_title"] = coll_data["title"]
+                        ctx["collection_obj"] = coll_data.get("collection_obj")
 
         logger.info(
             f"Enrichment complete: {len(context)} poems have collection/hub context."
@@ -788,13 +845,15 @@ class OfflineOrchestrator:
                         if is_first and collection_obj is not None:
                             collection_context_obj = collection_obj
                         elif collection_page_id in collections:
-                            # Not the first poem — pass a Collection without
-                            # the structure (only for page_id and title reference)
                             coll_data = collections[collection_page_id]
+                            coll_obj_cached = coll_data.get("collection_obj")
                             collection_context_obj = Collection(
                                 page_id=collection_page_id,
                                 title=coll_data["title"],
                                 url=coll_data["url"],
+                                author=coll_obj_cached.author if coll_obj_cached else None,
+                                publication_date=coll_obj_cached.publication_date if coll_obj_cached else None,
+                                publisher=coll_obj_cached.publisher if coll_obj_cached else None,
                             )
 
                     try:

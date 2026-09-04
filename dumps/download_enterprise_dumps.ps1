@@ -6,13 +6,15 @@
 #   - curl.exe available in PATH (ships with Windows 10+)
 #
 # Usage:
-#   1. Edit the $username and $password variables below.
+#   1. Set WIKIMEDIA_ENTERPRISE_USERNAME and WIKIMEDIA_ENTERPRISE_PASSWORD environment variables.
+#      Example: $env:WIKIMEDIA_ENTERPRISE_USERNAME = "your_username"
+#               $env:WIKIMEDIA_ENTERPRISE_PASSWORD = "your_password"
 #   2. Run: .\download_enterprise_dumps.ps1
 # -----------------------------------------------------------
 
 # -- Configuration: your Wikimedia Enterprise credentials --
-$username = "username"        # your lowercase username
-$password = "YourPassword"    # your password
+$username = if ($env:WIKIMEDIA_ENTERPRISE_USERNAME) { $env:WIKIMEDIA_ENTERPRISE_USERNAME } else { "username" }
+$password = if ($env:WIKIMEDIA_ENTERPRISE_PASSWORD) { $env:WIKIMEDIA_ENTERPRISE_PASSWORD } else { "YourPassword" }
 
 # -- Step 1: Authenticate and retrieve an access token --
 $body = @{

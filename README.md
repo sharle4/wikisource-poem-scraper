@@ -105,7 +105,7 @@ Offline mode needs three types of dump files in a single directory.
 .\dumps\download_enterprise_dumps.ps1
 ```
 
-Downloads `frwikisource_namespace_0_*.ndjson` (10 files, ~21 GB) with fully rendered HTML for every namespace-0 page.
+Downloads `frwikisource_namespace_0_*.ndjson` (11 files, ~21.5 GB) with fully rendered HTML for every namespace-0 page.
 
 **Total disk space:** ~35 GB for dumps + 2–4 GB for the generated index.
 

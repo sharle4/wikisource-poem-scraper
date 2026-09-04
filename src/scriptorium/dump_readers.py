@@ -255,7 +255,14 @@ def iter_ndjson_pages(
     If target_page_ids is provided, only yields pages whose identifier is in the set.
     Uses a regex pre-filter on the raw bytes to skip full JSON parsing for irrelevant pages.
     """
-    ndjson_files = sorted(ndjson_dir.glob("frwikisource_namespace_0_*.ndjson"))
+    def _chunk_sort_key(p: Path) -> int:
+        m = re.search(r'_(\d+)\.ndjson$', p.name)
+        return int(m.group(1)) if m else 0
+
+    ndjson_files = sorted(
+        ndjson_dir.glob("frwikisource_namespace_0_*.ndjson"),
+        key=_chunk_sort_key,
+    )
     if not ndjson_files:
         logger.error(f"No NDJSON files found in {ndjson_dir}")
         return
